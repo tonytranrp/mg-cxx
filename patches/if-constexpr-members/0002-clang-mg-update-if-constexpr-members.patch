@@ -1,0 +1,118 @@
+From eb371d096d528f23c64afdf9a0745b6fa097fb55 Mon Sep 17 00:00:00 2001
+From: Mike <michaelgorney4@gmail.com>
+Date: Tue, 12 May 2026 10:57:47 -0400
+Subject: [PATCH 2/4] clang-mg: update if-constexpr-members
+
+---
+ clang/include/clang/AST/DeclCXX.h             |  3 ++-
+ clang/include/clang/AST/RecursiveASTVisitor.h | 25 +++++++++++++++++++
+ clang/include/clang/Basic/DeclNodes.td        |  1 +
+ clang/lib/AST/DeclBase.cpp                    |  1 +
+ clang/lib/Parse/ParseDeclCXX.cpp              |  3 +++
+ 5 files changed, 32 insertions(+), 1 deletion(-)
+
+diff --git a/clang/include/clang/AST/DeclCXX.h b/clang/include/clang/AST/DeclCXX.h
+index 1246275fb843..6d4bfa251d11 100644
+--- a/clang/include/clang/AST/DeclCXX.h
++++ b/clang/include/clang/AST/DeclCXX.h
+@@ -63,6 +63,7 @@ class CXXDestructorDecl;
+ class CXXFinalOverriderMap;
+ class CXXIndirectPrimaryBaseSet;
+ class CXXMethodDecl;
++class CXXMGClassMemberIfDecl;
+ class DecompositionDecl;
+ class FriendDecl;
+ class FunctionTemplateDecl;
+@@ -2452,7 +2453,7 @@ public:
+   SourceLocation getConstexprLoc() const { return ConstexprLoc; }
+   SourceLocation getElseLoc() const { return ElseLoc; }
+ 
+-  SourceRange getSourceRange() const {
++  SourceRange getSourceRange() const override {
+     if (ElseLoc.isValid())
+       return SourceRange(IfLoc, ElseLoc);
+     return SourceRange(IfLoc, IfLoc);
+diff --git a/clang/include/clang/AST/RecursiveASTVisitor.h b/clang/include/clang/AST/RecursiveASTVisitor.h
+index b5be0910194b..1c4dfccea3af 100644
+--- a/clang/include/clang/AST/RecursiveASTVisitor.h
++++ b/clang/include/clang/AST/RecursiveASTVisitor.h
+@@ -321,6 +321,9 @@ public:
+   /// \returns false if the visitation was terminated early, true otherwise.
+   bool TraverseConceptReference(ConceptReference *CR);
+ 
++  ///
++  bool TraverseCXXMGClassMemberIfDecl(ConceptReference *CR);
++
+   // Visit concept reference.
+   bool VisitConceptReference(ConceptReference *CR) { return true; }
+ 
+@@ -2737,6 +2740,28 @@ bool RecursiveASTVisitor<Derived>::TraverseConceptReference(
+   return true;
+ }
+ 
++template <typename Derived>
++bool RecursiveASTVisitor<Derived>::TraverseCXXMGClassMemberIfDecl(
++    CXXMGClassMemberIfDecl *D) {
++
++  // Standard "walk up" call (very important)
++  TRY_TO(WalkUpFromCXXMGClassMemberIfDecl(D));
++
++  // Traverse condition
++  if (Expr *Cond = D->getCond())
++    TRY_TO(TraverseStmt(Cond));
++
++  // Traverse "then" branch declarations
++  for (Decl *ThenD : D->getThenDecls())
++    TRY_TO(TraverseDecl(ThenD));
++
++  // Traverse "else" branch declarations
++  for (Decl *ElseD : D->getElseDecls())
++    TRY_TO(TraverseDecl(ElseD));
++
++  return true;
++}
++
+ template <typename Derived>
+ bool RecursiveASTVisitor<Derived>::TraverseOffsetOfNode(
+     const OffsetOfNode *Node) {
+diff --git a/clang/include/clang/Basic/DeclNodes.td b/clang/include/clang/Basic/DeclNodes.td
+index ffb58b43812d..86827cbec95f 100644
+--- a/clang/include/clang/Basic/DeclNodes.td
++++ b/clang/include/clang/Basic/DeclNodes.td
+@@ -101,6 +101,7 @@ def AccessSpec : DeclNode<Decl>;
+ def Friend : DeclNode<Decl>;
+ def FriendTemplate : DeclNode<Decl>;
+ def StaticAssert : DeclNode<Decl>;
++def CXXMGClassMemberIf : DeclNode<Decl>;
+ def ExplicitInstantiation : DeclNode<Decl>;
+ def Block : DeclNode<Decl, "blocks">, DeclContext;
+ def OutlinedFunction : DeclNode<Decl>, DeclContext;
+diff --git a/clang/lib/AST/DeclBase.cpp b/clang/lib/AST/DeclBase.cpp
+index ea01e3263896..cede3159e4cf 100644
+--- a/clang/lib/AST/DeclBase.cpp
++++ b/clang/lib/AST/DeclBase.cpp
+@@ -1023,6 +1023,7 @@ unsigned Decl::getIdentifierNamespaceForKind(Kind DeclKind) {
+     case OpenACCDeclare:
+     case OpenACCRoutine:
+     case ExplicitInstantiation:
++    case CXXMGClassMemberIf:
+       // Never looked up by name.
+       return 0;
+   }
+diff --git a/clang/lib/Parse/ParseDeclCXX.cpp b/clang/lib/Parse/ParseDeclCXX.cpp
+index 9e7118e61bd1..c89866a33951 100644
+--- a/clang/lib/Parse/ParseDeclCXX.cpp
++++ b/clang/lib/Parse/ParseDeclCXX.cpp
+@@ -3617,6 +3617,9 @@ Parser::DeclGroupPtrTy Parser::ParseCXXClassMemberDeclarationWithPragmas(
+   case tok::annot_pragma_openacc:
+     return ParseOpenACCDirectiveDecl(AS, AccessAttrs, TagType, TagDecl);
+ 
++  case tok::kw_if:
++    return ParseCXXMGClassMemberIf(AS, AccessAttrs, TagType, TagDecl);
++
+   default:
+     if (tok::isPragmaAnnotation(Tok.getKind())) {
+       Diag(Tok.getLocation(), diag::err_pragma_misplaced_in_decl)
+-- 
+2.54.0
+

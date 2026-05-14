@@ -1,0 +1,25 @@
+From b4438b87b9cc72409d6fbaad299743ba808e5ec8 Mon Sep 17 00:00:00 2001
+From: Mike <michaelgorney4@gmail.com>
+Date: Tue, 12 May 2026 16:43:35 -0400
+Subject: [PATCH 4/4] clang-mg: update if-constexpr-members
+
+---
+ clang/include/clang/Sema/Sema.h | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/clang/include/clang/Sema/Sema.h b/clang/include/clang/Sema/Sema.h
+index 02d5185f3c3d..fde076719781 100644
+--- a/clang/include/clang/Sema/Sema.h
++++ b/clang/include/clang/Sema/Sema.h
+@@ -2596,7 +2596,7 @@ public:
+   }
+ 
+   std::optional<bool> EvaluateCXXMGClassMemberIfCondition(
+-      SourceLocation IfLoc, Expr *Cond) {
++    SourceLocation IfLoc, Expr *Cond) {
+     if (!Cond)
+       return std::nullopt;
+ 
+-- 
+2.54.0
+

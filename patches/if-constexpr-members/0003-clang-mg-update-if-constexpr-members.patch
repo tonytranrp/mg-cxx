@@ -1,0 +1,39 @@
+From 17a40e22568ff28edb96077ee853e59b804a8dcc Mon Sep 17 00:00:00 2001
+From: Mike <michaelgorney4@gmail.com>
+Date: Tue, 12 May 2026 16:09:02 -0400
+Subject: [PATCH 3/4] clang-mg: update if-constexpr-members
+
+---
+ clang/include/clang/AST/RecursiveASTVisitor.h | 11 -----------
+ 1 file changed, 11 deletions(-)
+
+diff --git a/clang/include/clang/AST/RecursiveASTVisitor.h b/clang/include/clang/AST/RecursiveASTVisitor.h
+index 1c4dfccea3af..62f9a5e654f2 100644
+--- a/clang/include/clang/AST/RecursiveASTVisitor.h
++++ b/clang/include/clang/AST/RecursiveASTVisitor.h
+@@ -2743,22 +2743,11 @@ bool RecursiveASTVisitor<Derived>::TraverseConceptReference(
+ template <typename Derived>
+ bool RecursiveASTVisitor<Derived>::TraverseCXXMGClassMemberIfDecl(
+     CXXMGClassMemberIfDecl *D) {
+-
+-  // Standard "walk up" call (very important)
+   TRY_TO(WalkUpFromCXXMGClassMemberIfDecl(D));
+ 
+-  // Traverse condition
+   if (Expr *Cond = D->getCond())
+     TRY_TO(TraverseStmt(Cond));
+ 
+-  // Traverse "then" branch declarations
+-  for (Decl *ThenD : D->getThenDecls())
+-    TRY_TO(TraverseDecl(ThenD));
+-
+-  // Traverse "else" branch declarations
+-  for (Decl *ElseD : D->getElseDecls())
+-    TRY_TO(TraverseDecl(ElseD));
+-
+   return true;
+ }
+ 
+-- 
+2.54.0
+
