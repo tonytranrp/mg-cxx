@@ -1,11 +1,8 @@
-From 34e344db0fbf9f0c9f238058572d4947641d9b99 Mon Sep 17 00:00:00 2001
+From cd9785a803d16323bffab1b581e0f8f5897a7f93 Mon Sep 17 00:00:00 2001
 From: Mike <michaelgorney4@gmail.com>
 Date: Mon, 18 May 2026 00:23:47 -0400
 Subject: [PATCH 5/5] clang-mg: update conditional-members
 
----
- clang/lib/Parse/ParseDeclCXX.cpp | 3 +++
- 1 file changed, 3 insertions(+)
 
 diff --git a/clang/lib/Parse/ParseDeclCXX.cpp b/clang/lib/Parse/ParseDeclCXX.cpp
 index 518c2f25829d..8e1b7cfacdc6 100644

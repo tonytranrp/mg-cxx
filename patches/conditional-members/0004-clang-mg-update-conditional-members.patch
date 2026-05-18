@@ -1,11 +1,8 @@
-From 0c26c93d6bc152ad11eb91af765842baa8aa9fef Mon Sep 17 00:00:00 2001
+From f3c19d03a386efb834c9db96476f5cac4e04334a Mon Sep 17 00:00:00 2001
 From: Mike <michaelgorney4@gmail.com>
 Date: Sun, 17 May 2026 23:44:50 -0400
 Subject: [PATCH 4/5] clang-mg: update conditional-members
 
----
- clang/include/clang/Parse/Parser.h | 3 ---
- 1 file changed, 3 deletions(-)
 
 diff --git a/clang/include/clang/Parse/Parser.h b/clang/include/clang/Parse/Parser.h
 index d375b966e823..2f950bd24d36 100644
