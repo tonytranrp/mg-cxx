@@ -66,6 +66,42 @@ if [ -n "$(git status --porcelain)" ]; then
     exit 1
 fi
 
+find_feature_dirs() {
+    find "$PATCH_ROOT" \
+        -mindepth 1 \
+        -maxdepth 1 \
+        -type d \
+        ! -name "*.backup.*" \
+        ! -name "*.bak.*" \
+        ! -name "*.old.*" \
+        ! -name ".backup" \
+        ! -name ".backups" \
+        ! -name "backup" \
+        ! -name "backups" \
+        ! -name ".patch-refresh-*" \
+        ! -name "*~" \
+        | sort
+}
+
+find_ignored_patch_dirs() {
+    find "$PATCH_ROOT" \
+        -mindepth 1 \
+        -maxdepth 1 \
+        -type d \
+        \( \
+            -name "*.backup.*" \
+            -o -name "*.bak.*" \
+            -o -name "*.old.*" \
+            -o -name ".backup" \
+            -o -name ".backups" \
+            -o -name "backup" \
+            -o -name "backups" \
+            -o -name ".patch-refresh-*" \
+            -o -name "*~" \
+        \) \
+        | sort
+}
+
 is_enabled_value() {
     case "$1" in
         1|true|TRUE|yes|YES|on|ON|enabled|ENABLED)
@@ -85,6 +121,8 @@ is_enabled_value() {
 write_default_feature_config() {
     local config_file="$1"
     local feature_name="$2"
+
+    mkdir -p "$(dirname "$config_file")"
 
     cat > "$config_file" <<EOF
 # Auto-generated config for clang-mg feature: $feature_name
@@ -110,6 +148,15 @@ load_feature_configs() {
     local feature_dir
     local feature_name
     local config_file
+
+    local ignored_dirs=()
+    mapfile -t ignored_dirs < <(find_ignored_patch_dirs)
+
+    if [ "${#ignored_dirs[@]}" -gt 0 ]; then
+        echo "Ignoring backup/temp patch directories:"
+        printf '  %s\n' "${ignored_dirs[@]}"
+        echo
+    fi
 
     while IFS= read -r feature_dir; do
         feature_name="$(basename "$feature_dir")"
@@ -152,7 +199,7 @@ load_feature_configs() {
         FEATURE_DEPS["$feature_name"]="${DEPENDS[*]:-}"
         FEATURE_BEFORE["$feature_name"]="${BEFORE[*]:-}"
 
-    done < <(find "$PATCH_ROOT" -mindepth 1 -maxdepth 1 -type d | sort)
+    done < <(find_feature_dirs)
 }
 
 sort_queue() {
@@ -292,7 +339,21 @@ build_feature_order() {
 }
 
 apply_loose_patches() {
-    if ! compgen -G "$PATCH_ROOT/*.patch" > /dev/null; then
+    local loose_patches=()
+
+    mapfile -t loose_patches < <(
+        find "$PATCH_ROOT" \
+            -maxdepth 1 \
+            -type f \
+            -name "*.patch" \
+            ! -name "*.backup.patch" \
+            ! -name "*.bak.patch" \
+            ! -name "*.old.patch" \
+            ! -name "*~" \
+            | sort
+    )
+
+    if [ "${#loose_patches[@]}" -eq 0 ]; then
         echo "No loose top-level patches found."
         return 0
     fi
@@ -301,7 +362,7 @@ apply_loose_patches() {
     echo "Applying loose top-level patches from:"
     echo "$PATCH_ROOT"
 
-    git am --3way "$PATCH_ROOT"/*.patch
+    git am --3way "${loose_patches[@]}"
 }
 
 apply_ordered_features() {

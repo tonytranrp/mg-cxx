@@ -1,0 +1,22 @@
+From b153ca7eda877e669fd1562c0145bb90fe6ccbed Mon Sep 17 00:00:00 2001
+From: Mike <michaelgorney4@gmail.com>
+Date: Sun, 17 May 2026 22:18:10 -0400
+Subject: [PATCH 3/3] clang-mg: update change-bin-name
+
+
+diff --git a/clang/tools/driver/CMakeLists.txt b/clang/tools/driver/CMakeLists.txt
+index cfb89569191f..1e9f2ff0ef34 100644
+--- a/clang/tools/driver/CMakeLists.txt
++++ b/clang/tools/driver/CMakeLists.txt
+@@ -89,7 +89,7 @@ if(NOT CLANG_LINKS_TO_CREATE)
+       clang-${CLANG_MG_SUFFIX}-cpp
+     )
+   else()
+-    set(CLANG_LINKS_TO_CREATE clang-${CLANG_MG_SUFFIX}++ clang-${CLANG_MG_SUFFIX}-cl clang-{$CLANG_MG_SUFFIX}-cpp)
++    set(CLANG_LINKS_TO_CREATE clang-${CLANG_MG_SUFFIX}++ clang-${CLANG_MG_SUFFIX}-cl clang-${CLANG_MG_SUFFIX}-cpp)
+   endif()
+ endif()
+ 
+-- 
+2.54.0
+

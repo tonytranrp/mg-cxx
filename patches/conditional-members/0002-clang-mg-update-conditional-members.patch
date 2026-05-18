@@ -1,4 +1,4 @@
-From d71230f095d86a6a6442212acadb78993b48aeda Mon Sep 17 00:00:00 2001
+From 62ec3f5d1758332b79842511f242caa5febac946 Mon Sep 17 00:00:00 2001
 From: Mike <michaelgorney4@gmail.com>
 Date: Sun, 17 May 2026 20:01:13 -0400
 Subject: [PATCH 2/3] clang-mg: update conditional-members
