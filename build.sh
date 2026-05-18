@@ -22,6 +22,9 @@ BUILD_LLVM_SCRIPT="$ROOT_DIR/scripts/build-llvm.sh"
 SAVE_FEATURE_SCRIPT="$ROOT_DIR/scripts/save-feature.sh"
 INSTALL_SCRIPT="$ROOT_DIR/scripts/install-clang-mg.sh"
 
+PATCH_ROOT="$ROOT_DIR/patches"
+FEATURE_CONFIG_NAME="${FEATURE_CONFIG_NAME:-feature.conf}"
+
 COMMAND="${1:-bootstrap}"
 
 INTERACTIVE="${INTERACTIVE:-0}"
@@ -47,15 +50,17 @@ Usage:
   ./build.sh [command]
 
 Commands:
-  bootstrap                  Clone/update LLVM if needed, apply all patches, then build
-  install                    Clone/update LLVM, reset clean, apply all patches, build, then add clang-mg to PATH
+  bootstrap                  Clone/update LLVM if needed, apply all enabled patches, then build
+  install                    Clone/update LLVM, reset clean, apply all enabled patches, build, then add clang-mg to PATH
   clone                      Clone LLVM only
   update                     Update LLVM only if the checkout is clean
   reset                      Reset LLVM checkout to LLVM_REF / origin ref
-  apply                      Apply all clang-mg patches
+  apply                      Apply all enabled clang-mg patches
   apply <feature-name...>    Apply one or more specific feature patch stacks
+  enable <feature-name...>   Enable one or more feature patch stacks
+  disable <feature-name...>  Disable one or more feature patch stacks
   build                      Build current LLVM tree only
-  fresh                      Reset LLVM, apply all patches, then build
+  fresh                      Reset LLVM, apply all enabled patches, then build
   rebuild                    Same as fresh
   save <feature-name>        Save current LLVM changes as patches for a feature
   help                       Show this help menu
@@ -67,6 +72,9 @@ Examples:
   ./build.sh apply
   ./build.sh apply change-bin-name
   ./build.sh apply change-bin-name curlinclude
+  ./build.sh enable if-constexpr-members
+  ./build.sh disable curlinclude
+  ./build.sh enable core if-constexpr-members
   ./build.sh build
   ./build.sh fresh
   ./build.sh save curlinclude
@@ -79,6 +87,7 @@ Environment variables:
   BUILD_DIR=$ROOT_DIR/work/build
   BUILD_TYPE=Debug
   JOBS=4
+  FEATURE_CONFIG_NAME=feature.conf
 EOF
 }
 
@@ -93,6 +102,156 @@ require_llvm_repo() {
         echo "  ./build.sh bootstrap"
         exit 1
     fi
+}
+
+list_patch_features() {
+    if [ ! -d "$PATCH_ROOT" ]; then
+        echo "No patches directory found:"
+        echo "  $PATCH_ROOT"
+        return 0
+    fi
+
+    find "$PATCH_ROOT" \
+        -mindepth 1 \
+        -maxdepth 1 \
+        -type d \
+        -exec basename {} \; \
+        | sort
+}
+
+write_default_feature_config() {
+    local config_file="$1"
+    local feature_name="$2"
+
+    mkdir -p "$(dirname "$config_file")"
+
+    cat > "$config_file" <<EOF
+# Auto-generated config for clang-mg feature: $feature_name
+
+# Whether this feature should be applied.
+# Valid values: 1, 0, true, false, yes, no, on, off
+ENABLED=1
+
+# Features that must be applied before this feature.
+# Example:
+#   DEPENDS=(core)
+DEPENDS=()
+
+# Features that this feature must be applied before.
+# Usually DEPENDS is enough, but this is useful for ordering from the other side.
+# Example:
+#   BEFORE=(if-constexpr-members)
+BEFORE=()
+EOF
+}
+
+ensure_feature_config() {
+    local feature_name="$1"
+    local feature_dir="$PATCH_ROOT/$feature_name"
+    local config_file="$feature_dir/$FEATURE_CONFIG_NAME"
+
+    if [ -z "$feature_name" ]; then
+        echo "ERROR: Missing feature name." >&2
+        echo >&2
+        echo "Usage:" >&2
+        echo "  ./build.sh enable <feature-name...>" >&2
+        echo "  ./build.sh disable <feature-name...>" >&2
+        exit 1
+    fi
+
+    if [ ! -d "$feature_dir" ]; then
+        echo "ERROR: Feature patch directory does not exist:" >&2
+        echo "  $feature_dir" >&2
+        echo >&2
+        echo "Available features:" >&2
+        list_patch_features | sed 's/^/  /' >&2
+        exit 1
+    fi
+
+    if [ ! -f "$config_file" ]; then
+        echo "Generating missing config:" >&2
+        echo "  $config_file" >&2
+        write_default_feature_config "$config_file" "$feature_name"
+    fi
+
+    printf '%s\n' "$config_file"
+}
+
+set_feature_enabled() {
+    local feature_name="$1"
+    local enabled_value="$2"
+
+    local config_file
+    config_file="$(ensure_feature_config "$feature_name")"
+
+    local tmp_file
+    tmp_file="$(mktemp)"
+
+    awk -v enabled_value="$enabled_value" '
+        BEGIN {
+            replaced = 0
+        }
+
+        /^[[:space:]]*ENABLED[[:space:]]*=/ && replaced == 0 {
+            print "ENABLED=" enabled_value
+            replaced = 1
+            next
+        }
+
+        {
+            print
+        }
+
+        END {
+            if (replaced == 0) {
+                print ""
+                print "# Whether this feature should be applied."
+                print "ENABLED=" enabled_value
+            }
+        }
+    ' "$config_file" > "$tmp_file"
+
+    mv "$tmp_file" "$config_file"
+
+    if [ "$enabled_value" = "1" ]; then
+        echo "Enabled feature:  $feature_name"
+    else
+        echo "Disabled feature: $feature_name"
+    fi
+
+    echo "Config:"
+    echo "  $config_file"
+}
+
+run_set_feature_enabled() {
+    local enabled_value="$1"
+    shift
+
+    if [ "$#" -eq 0 ]; then
+        echo "ERROR: Missing feature name."
+
+        if [ "$enabled_value" = "1" ]; then
+            echo
+            echo "Usage:"
+            echo "  ./build.sh enable <feature-name...>"
+        else
+            echo
+            echo "Usage:"
+            echo "  ./build.sh disable <feature-name...>"
+        fi
+
+        echo
+        echo "Available features:"
+        list_patch_features | sed 's/^/  /'
+        exit 1
+    fi
+
+    local feature_name
+
+    for feature_name in "$@"; do
+        set_feature_enabled "$feature_name" "$enabled_value"
+        echo
+    done
 }
 
 run_clone() {
@@ -232,6 +391,16 @@ case "$COMMAND" in
     apply)
         shift
         run_apply_features "$@"
+        ;;
+
+    enable)
+        shift
+        run_set_feature_enabled 1 "$@"
+        ;;
+
+    disable)
+        shift
+        run_set_feature_enabled 0 "$@"
         ;;
 
     build)

@@ -1,11 +1,8 @@
-From 8e030f71c854329527569eae97ee3f5b765ffbf9 Mon Sep 17 00:00:00 2001
+From 325b85e9a31935363a25f1c769c988039edbd893 Mon Sep 17 00:00:00 2001
 From: Mike <michaelgorney4@gmail.com>
 Date: Sun, 17 May 2026 20:02:35 -0400
 Subject: [PATCH] clang-mg: add language-option
 
----
- clang/include/clang/Basic/LangOptions.def | 1 +
- 1 file changed, 1 insertion(+)
 
 diff --git a/clang/include/clang/Basic/LangOptions.def b/clang/include/clang/Basic/LangOptions.def
 index 3bbb40ba09f0..0e26ff393017 100644

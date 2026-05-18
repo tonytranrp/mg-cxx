@@ -1,12 +1,8 @@
-From f41d17ef9515b6be1e2cfd4e85b36e5dff1e0131 Mon Sep 17 00:00:00 2001
+From 87e2db9ba0c94bf521e5e58bf4ffb91a86ddfbf3 Mon Sep 17 00:00:00 2001
 From: Mike <michaelgorney4@gmail.com>
 Date: Mon, 11 May 2026 17:50:26 -0400
 Subject: [PATCH 1/2] clang-mg: add change-bin-name
 
----
- clang/CMakeLists.txt              |  4 ++++
- clang/tools/driver/CMakeLists.txt | 11 ++++++++++-
- 2 files changed, 14 insertions(+), 1 deletion(-)
 
 diff --git a/clang/CMakeLists.txt b/clang/CMakeLists.txt
 index 40506fc8a154..1c497d2c36c6 100644
