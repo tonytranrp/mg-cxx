@@ -1,4 +1,4 @@
-From 585e15cf245ee7a8ef322b1998ef9843642e7087 Mon Sep 17 00:00:00 2001
+From 514b42207f68f208aa9b19d2036e9c1ed28502b2 Mon Sep 17 00:00:00 2001
 From: Mike <michaelgorney4@gmail.com>
 Date: Sun, 17 May 2026 22:18:10 -0400
 Subject: [PATCH 3/3] clang-mg: update change-bin-name

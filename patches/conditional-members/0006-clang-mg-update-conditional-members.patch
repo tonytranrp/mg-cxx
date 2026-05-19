@@ -1,0 +1,154 @@
+From 6efdf8f38ae2dcb2ab3bb44ce5a33cdf8c52ac93 Mon Sep 17 00:00:00 2001
+From: Mike <michaelgorney4@gmail.com>
+Date: Tue, 19 May 2026 14:26:59 -0400
+Subject: [PATCH 6/6] clang-mg: update conditional-members
+
+---
+ clang/lib/Parse/CMakeLists.txt     |  1 +
+ clang/lib/Parse/ParseDeclCXX.cpp   | 50 -------------------------
+ clang/lib/Parse/ParseDeclCXXMG.cpp | 59 ++++++++++++++++++++++++++++++
+ 3 files changed, 60 insertions(+), 50 deletions(-)
+ create mode 100644 clang/lib/Parse/ParseDeclCXXMG.cpp
+
+diff --git a/clang/lib/Parse/CMakeLists.txt b/clang/lib/Parse/CMakeLists.txt
+index 8dd120f529b1..07169bfc9129 100644
+--- a/clang/lib/Parse/CMakeLists.txt
++++ b/clang/lib/Parse/CMakeLists.txt
+@@ -12,6 +12,7 @@ add_clang_library(clangParse
+   ParseCXXInlineMethods.cpp
+   ParseDecl.cpp
+   ParseDeclCXX.cpp
++  ParseDeclCXXMG.cpp
+   ParseExpr.cpp
+   ParseExprCXX.cpp
+   ParseHLSL.cpp
+diff --git a/clang/lib/Parse/ParseDeclCXX.cpp b/clang/lib/Parse/ParseDeclCXX.cpp
+index 8e1b7cfacdc6..6efc9ddd280b 100644
+--- a/clang/lib/Parse/ParseDeclCXX.cpp
++++ b/clang/lib/Parse/ParseDeclCXX.cpp
+@@ -3493,56 +3493,6 @@ Parser::DeclGroupPtrTy Parser::ParseCXXClassMemberDeclarationWithPragmas(
+   }
+ }
+ 
+-Parser::DeclGroupPtrTy Parser::ParseCXXMGConditionalMember(AccessSpecifier &AS,
+-                              ParsedAttributes &AccessAttrs,
+-                              DeclSpec::TST TagType, Decl *Tag) {
+-  assert(getLangOpts().CPlusPlusMG && "ParseCXXMGConditionalMember should only be called in C++MG mode");
+-
+-  // consume the 'if'
+-  if (!TryConsumeToken(tok::kw_if)) {
+-    Diag(Tok.getLocation(), diag::err_expected) << tok::kw_if;
+-    // gpt says this will make the parser not get stuck
+-    SkipUntil(tok::semi, tok::r_brace, StopBeforeMatch);
+-    return nullptr;
+-  }
+-
+-  // Expect 'constexpr' bc it just makes more sense man
+-  if (!TryConsumeToken(tok::kw_constexpr)) {
+-    Diag(Tok.getLocation(), diag::err_expected) << tok::kw_constexpr;
+-    SkipUntil(tok::semi, tok::r_brace, StopBeforeMatch);
+-    return nullptr;
+-  }
+-
+-  auto lparen = ConsumeParen();
+-  auto cond = ParseExpression(); // Parse the condition expression
+-  auto rparen = ConsumeParen();
+-
+-  ParseCXXMGConditionalMemberBody(AS, AccessAttrs, TagType, Tag);
+-
+-  if (!TryConsumeToken(tok::kw_else)) {
+-    // TODO: We're done
+-    return nullptr;
+-  }
+-
+-  if (Tok.is(tok::kw_if)) {
+-    // Another condition to check (if/else if/...)
+-    return ParseCXXMGConditionalMember(AS, AccessAttrs, TagType, Tag);
+-  }
+-  return ParseCXXMGConditionalMemberBody(AS, AccessAttrs, TagType, Tag);
+-}
+-
+-Parser::DeclGroupPtrTy Parser::ParseCXXMGConditionalMemberBody(AccessSpecifier &AS,
+-                              ParsedAttributes &AccessAttrs,
+-                              DeclSpec::TST TagType, Decl *Tag) {
+-  auto lbrace = ConsumeBrace();
+-  // TODO: Figure out what to do about ts
+-  while (Tok.isNot(tok::r_brace) && Tok.isNot(tok::eof)) {
+-    ParseCXXClassMemberDeclarationWithPragmas(AS, AccessAttrs, TagType, Tag);
+-  }
+-  auto rbrace = ConsumeBrace();
+-  return nullptr;
+-}
+-
+ void Parser::ParseCXXMemberSpecification(SourceLocation RecordLoc,
+                                          SourceLocation AttrFixitLoc,
+                                          ParsedAttributes &Attrs,
+diff --git a/clang/lib/Parse/ParseDeclCXXMG.cpp b/clang/lib/Parse/ParseDeclCXXMG.cpp
+new file mode 100644
+index 000000000000..b2d281464004
+--- /dev/null
++++ b/clang/lib/Parse/ParseDeclCXXMG.cpp
+@@ -0,0 +1,59 @@
++//===--- ParseDeclCXXMG.cpp - C++MG Declaration Parsing -------------*- C++MG -*-===//
++//
++//  This file implements the C++MG Declaration portions of the Parser interfaces.
++//
++//===----------------------------------------------------------------------===//
++
++#include "clang/Parse/Parser.h"
++
++using namespace clang;
++
++Parser::DeclGroupPtrTy Parser::ParseCXXMGConditionalMember(AccessSpecifier &AS,
++                              ParsedAttributes &AccessAttrs,
++                              DeclSpec::TST TagType, Decl *Tag) {
++  assert(getLangOpts().CPlusPlusMG && "ParseCXXMGConditionalMember should only be called in C++MG mode");
++
++  // consume the 'if'
++  if (!TryConsumeToken(tok::kw_if)) {
++    Diag(Tok.getLocation(), diag::err_expected) << tok::kw_if;
++    // gpt says this will make the parser not get stuck
++    SkipUntil(tok::semi, tok::r_brace, StopBeforeMatch);
++    return nullptr;
++  }
++
++  // Expect 'constexpr' bc it just makes more sense man
++  if (!TryConsumeToken(tok::kw_constexpr)) {
++    Diag(Tok.getLocation(), diag::err_expected) << tok::kw_constexpr;
++    SkipUntil(tok::semi, tok::r_brace, StopBeforeMatch);
++    return nullptr;
++  }
++
++  auto lparen = ConsumeParen();
++  auto cond = ParseExpression(); // Parse the condition expression
++  auto rparen = ConsumeParen();
++
++  ParseCXXMGConditionalMemberBody(AS, AccessAttrs, TagType, Tag);
++
++  if (!TryConsumeToken(tok::kw_else)) {
++    // TODO: We're done
++    return nullptr;
++  }
++
++  if (Tok.is(tok::kw_if)) {
++    // Another condition to check (if/else if/...)
++    return ParseCXXMGConditionalMember(AS, AccessAttrs, TagType, Tag);
++  }
++  return ParseCXXMGConditionalMemberBody(AS, AccessAttrs, TagType, Tag);
++}
++
++Parser::DeclGroupPtrTy Parser::ParseCXXMGConditionalMemberBody(AccessSpecifier &AS,
++                              ParsedAttributes &AccessAttrs,
++                              DeclSpec::TST TagType, Decl *Tag) {
++  auto lbrace = ConsumeBrace();
++  // TODO: Figure out what to do about ts
++  while (Tok.isNot(tok::r_brace) && Tok.isNot(tok::eof)) {
++    ParseCXXClassMemberDeclarationWithPragmas(AS, AccessAttrs, TagType, Tag);
++  }
++  auto rbrace = ConsumeBrace();
++  return nullptr;
++}
+\ No newline at end of file
+-- 
+2.54.0
+

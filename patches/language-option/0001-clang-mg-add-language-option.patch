@@ -1,4 +1,4 @@
-From ceb41a921474672164be69003266d002d866260e Mon Sep 17 00:00:00 2001
+From 64a71119aac4290d385ba37bb304a58d6b32a8b6 Mon Sep 17 00:00:00 2001
 From: Mike <michaelgorney4@gmail.com>
 Date: Sun, 17 May 2026 20:02:35 -0400
 Subject: [PATCH] clang-mg: add language-option
