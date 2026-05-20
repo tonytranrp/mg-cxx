@@ -1,0 +1,316 @@
+From 8712ec67455c57879412ff05188cf4cca0fb0d58 Mon Sep 17 00:00:00 2001
+From: Mike <michaelgorney4@gmail.com>
+Date: Wed, 20 May 2026 16:00:06 -0400
+Subject: [PATCH 7/7] clang-mg: update conditional-members
+
+---
+ clang/include/clang/AST/DeclCXX.h             |   2 +
+ clang/include/clang/AST/DeclCXXMG.h           | 155 ++++++++++++++++++
+ clang/include/clang/AST/RecursiveASTVisitor.h |  10 ++
+ clang/include/clang/Basic/DeclNodes.td        |   1 +
+ clang/lib/AST/CMakeLists.txt                  |   1 +
+ clang/lib/AST/DeclCXXMG.cpp                   |  48 ++++++
+ .../lib/Sema/SemaTemplateInstantiateDecl.cpp  |  12 ++
+ 7 files changed, 229 insertions(+)
+ create mode 100644 clang/include/clang/AST/DeclCXXMG.h
+ create mode 100644 clang/lib/AST/DeclCXXMG.cpp
+
+diff --git a/clang/include/clang/AST/DeclCXX.h b/clang/include/clang/AST/DeclCXX.h
+index cc4b4ff9db27..914c8a6276c2 100644
+--- a/clang/include/clang/AST/DeclCXX.h
++++ b/clang/include/clang/AST/DeclCXX.h
+@@ -51,6 +51,8 @@
+ #include <memory>
+ #include <vector>
+ 
++#include "clang/AST/DeclCXXMG.h"
++
+ namespace clang {
+ 
+ class ASTContext;
+diff --git a/clang/include/clang/AST/DeclCXXMG.h b/clang/include/clang/AST/DeclCXXMG.h
+new file mode 100644
+index 000000000000..3092e259deaa
+--- /dev/null
++++ b/clang/include/clang/AST/DeclCXXMG.h
+@@ -0,0 +1,155 @@
++//===- DeclCXXMG.h - Classes for representing C++MG declarations --*- C++MG -*-=====//
++//
++/// \file
++/// Defines the C++MG Decl subclasses.
++//
++//===----------------------------------------------------------------------===//
++
++#ifndef LLVM_CLANG_AST_DECLCXXMG_H
++#define LLVM_CLANG_AST_DECLCXXMG_H
++
++#include "clang/AST/DeclBase.h"
++#include "clang/AST/ASTVector.h"
++#include "clang/Basic/Specifiers.h"
++#include "llvm/ADT/ArrayRef.h"
++
++namespace clang {
++
++class ASTContext;
++class Expr;
++
++/// Represents one arm of a class-scope C++MG conditional member chain.
++///
++/// Example:
++///
++///   if constexpr (A) {
++///     int a;
++///   } else if constexpr (B) {
++///     int b;
++///   } else {
++///     int c;
++///   }
++///
++/// This would be represented as three arms:
++///
++///   arm 0: condition A, pattern decls for `a`
++///   arm 1: condition B, pattern decls for `b`
++///   arm 2: no condition, pattern decls for `c`
++///
++/// The final `else` arm has no condition. In that case, `Condition` is null
++/// and `IsElseArm` is true.
++///
++/// These declarations are inactive member patterns. They should not be treated
++/// as active members of the parent CXXRecordDecl until Sema selects an arm and
++/// materializes its declarations into the real class/struct.
++struct CXXMGConditionalMemberArm {
++  Expr *Condition = nullptr;
++  llvm::ArrayRef<Decl *> Decls;
++
++  AccessSpecifier StartAS = AS_none;
++
++  SourceRange Range;
++
++  bool IsElseArm = false;
++
++  CXXMGConditionalMemberArm() = default;
++
++  CXXMGConditionalMemberArm(Expr *Condition,
++                            llvm::ArrayRef<Decl *> Decls,
++                            AccessSpecifier StartAS,
++                            SourceRange Range,
++                            bool IsElseArm)
++      : Condition(Condition),
++        Decls(Decls),
++        StartAS(StartAS),
++        Range(Range),
++        IsElseArm(IsElseArm) {}
++
++  bool hasCondition() const {
++    return Condition != nullptr;
++  }
++
++  bool isElseArm() const {
++    return IsElseArm;
++  }
++
++  SourceRange getSourceRange() const {
++    return Range;
++  }
++};
++
++/// Represents a complete class-scope C++MG conditional member declaration.
++///
++/// Example:
++///
++///   template <bool A, bool B>
++///   struct S {
++///     if constexpr (A) {
++///       int a;
++///     } else if constexpr (B) {
++///       int b;
++///     } else {
++///       int c;
++///     }
++///   };
++///
++/// This declaration represents the whole conditional chain, not just one
++/// branch. Each `if constexpr`, `else if constexpr`, and final `else` body is
++/// stored as a `CXXMGConditionalMemberArm`.
++///
++/// The arms are checked in source order. During materialization, Sema selects
++/// the first arm whose condition evaluates to true. If no conditional arm is
++/// selected, the final unconditional `else` arm is selected if present.
++///
++/// The declarations inside each arm are stored as inactive member patterns.
++/// They should not affect lookup, layout, field lists, special member
++/// generation, or normal class semantics until the selected arm is materialized
++/// into the actual CXXRecordDecl.
++class CXXMGConditionalMemberDecl final : public Decl {
++  ASTVector<CXXMGConditionalMemberArm> Arms;
++  ASTVector<Decl *> OwnedDecls;
++
++  SourceLocation IfLoc;
++
++  CXXMGConditionalMemberDecl(DeclContext *DC, SourceLocation IfLoc)
++      : Decl(CXXMGConditionalMember, DC, IfLoc),
++        IfLoc(IfLoc) {}
++
++public:
++  static CXXMGConditionalMemberDecl *
++  Create(ASTContext &Ctx,
++         DeclContext *DC,
++         SourceLocation IfLoc,
++         llvm::ArrayRef<CXXMGConditionalMemberArm> ParsedArms);
++
++  llvm::ArrayRef<CXXMGConditionalMemberArm> arms() const {
++    return Arms;
++  }
++
++  unsigned getNumArms() const {
++    return Arms.size();
++  }
++
++  const CXXMGConditionalMemberArm &getArm(unsigned I) const {
++    return Arms[I];
++  }
++
++  SourceLocation getIfLoc() const {
++    return IfLoc;
++  }
++
++  SourceRange getSourceRange() const override {
++    if (Arms.empty())
++      return SourceRange(IfLoc, IfLoc);
++
++    return SourceRange(IfLoc, Arms.back().getSourceRange().getEnd());
++  }
++
++  static bool classof(const Decl *D) {
++    return D->getKind() == CXXMGConditionalMember;
++  }
++};
++
++} // namespace clang
++
++#endif // LLVM_CLANG_AST_DECLCXXMG_H
+\ No newline at end of file
+diff --git a/clang/include/clang/AST/RecursiveASTVisitor.h b/clang/include/clang/AST/RecursiveASTVisitor.h
+index b5be0910194b..7728ff8687c8 100644
+--- a/clang/include/clang/AST/RecursiveASTVisitor.h
++++ b/clang/include/clang/AST/RecursiveASTVisitor.h
+@@ -2504,6 +2504,16 @@ DEF_TRAVERSE_DECL(ImplicitConceptSpecializationDecl, {
+   TRY_TO(TraverseTemplateArguments(D->getTemplateArguments()));
+ })
+ 
++DEF_TRAVERSE_DECL(CXXMGConditionalMemberDecl, {
++  for (const CXXMGConditionalMemberArm &Arm : D->arms()) {
++    if (Arm.Condition)
++      TRY_TO(TraverseStmt(Arm.Condition));
++
++    for (Decl *PatternDecl : Arm.Decls)
++      TRY_TO(TraverseDecl(PatternDecl));
++  }
++})
++
+ #undef DEF_TRAVERSE_DECL
+ 
+ // ----------------- Stmt traversal -----------------
+diff --git a/clang/include/clang/Basic/DeclNodes.td b/clang/include/clang/Basic/DeclNodes.td
+index ffb58b43812d..d4ddffc2c982 100644
+--- a/clang/include/clang/Basic/DeclNodes.td
++++ b/clang/include/clang/Basic/DeclNodes.td
+@@ -117,3 +117,4 @@ def HLSLBuffer : DeclNode<Named, "HLSLBuffer">, DeclContext;
+ def HLSLRootSignature : DeclNode<Named, "HLSLRootSignature">;
+ def OpenACCDeclare : DeclNode<Decl, "#pragma acc declare">;
+ def OpenACCRoutine : DeclNode<Decl, "#pragma acc routine">;
++def CXXMGConditionalMember : DeclNode<Decl>;
+\ No newline at end of file
+diff --git a/clang/lib/AST/CMakeLists.txt b/clang/lib/AST/CMakeLists.txt
+index e33250dc005e..93f8705dc7a1 100644
+--- a/clang/lib/AST/CMakeLists.txt
++++ b/clang/lib/AST/CMakeLists.txt
+@@ -48,6 +48,7 @@ add_clang_library(clangAST
+   DeclarationName.cpp
+   DeclBase.cpp
+   DeclCXX.cpp
++  DeclCXXMG.cpp
+   DeclFriend.cpp
+   DeclGroup.cpp
+   DeclObjC.cpp
+diff --git a/clang/lib/AST/DeclCXXMG.cpp b/clang/lib/AST/DeclCXXMG.cpp
+new file mode 100644
+index 000000000000..7b4450f48b5e
+--- /dev/null
++++ b/clang/lib/AST/DeclCXXMG.cpp
+@@ -0,0 +1,48 @@
++//===- DeclCXXMG.cpp - C++MG Declaration AST Node Implementation ----------===//
++//
++// This file implements the C++MG related Decl classes.
++//
++//===----------------------------------------------------------------------===//
++
++#include "clang/AST/DeclCXXMG.h"
++#include "clang/AST/ASTContext.h"
++#include "clang/AST/Expr.h"
++
++using namespace clang;
++
++CXXMGConditionalMemberDecl *
++CXXMGConditionalMemberDecl::Create(
++    ASTContext &Ctx,
++    DeclContext *DC,
++    SourceLocation IfLoc,
++    llvm::ArrayRef<CXXMGConditionalMemberArm> ParsedArms) {
++  auto *D = new (Ctx, DC) CXXMGConditionalMemberDecl(DC, IfLoc);
++
++  unsigned TotalDecls = 0;
++  for (const CXXMGConditionalMemberArm &Arm : ParsedArms)
++    TotalDecls += Arm.Decls.size();
++
++  D->Arms.reserve(Ctx, ParsedArms.size());
++  D->OwnedDecls.reserve(Ctx, TotalDecls);
++
++  for (const CXXMGConditionalMemberArm &Arm : ParsedArms) {
++    unsigned FirstDecl = D->OwnedDecls.size();
++
++    D->OwnedDecls.append(Ctx, Arm.Decls.begin(), Arm.Decls.end());
++
++    llvm::ArrayRef<Decl *> StableDecls(
++        D->OwnedDecls.begin() + FirstDecl,
++        Arm.Decls.size());
++
++    D->Arms.push_back(
++        CXXMGConditionalMemberArm{
++            Arm.Condition,
++            StableDecls,
++            Arm.StartAS,
++            Arm.Range,
++            Arm.IsElseArm},
++        Ctx);
++  }
++
++  return D;
++}
+\ No newline at end of file
+diff --git a/clang/lib/Sema/SemaTemplateInstantiateDecl.cpp b/clang/lib/Sema/SemaTemplateInstantiateDecl.cpp
+index ce0e390e371e..4fcc6f886258 100644
+--- a/clang/lib/Sema/SemaTemplateInstantiateDecl.cpp
++++ b/clang/lib/Sema/SemaTemplateInstantiateDecl.cpp
+@@ -4767,6 +4767,18 @@ Decl *Sema::SubstDecl(Decl *D, DeclContext *Owner,
+   return SubstD;
+ }
+ 
++Decl *TemplateDeclInstantiator::VisitCXXMGConditionalMemberDecl(
++    CXXMGConditionalMemberDecl* D) {
++  // TODO: implement actual conditional member instantiation:
++  // 1. substitute template arguments into each arm condition
++  // 2. evaluate the first true condition
++  // 3. instantiate only that arm's inactive pattern declarations
++  //
++  // For now, return nullptr so this decl itself does not instantiate
++  // into an active member.
++  return nullptr;
++}
++
+ void TemplateDeclInstantiator::adjustForRewrite(RewriteKind RK,
+                                                 FunctionDecl *Orig, QualType &T,
+                                                 TypeSourceInfo *&TInfo,
+-- 
+2.54.0
+

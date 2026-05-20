@@ -1,7 +1,7 @@
-From ab87e2edb7f0b7ed92d1bf919dcf927e050dd72d Mon Sep 17 00:00:00 2001
+From b972fc9d23a68830578fcb02993c5748c51a688f Mon Sep 17 00:00:00 2001
 From: Mike <michaelgorney4@gmail.com>
 Date: Sun, 17 May 2026 20:01:13 -0400
-Subject: [PATCH 1/6] clang-mg: update conditional-members
+Subject: [PATCH 1/7] clang-mg: update conditional-members
 
 ---
  clang/lib/Parse/ParseDeclCXX.cpp | 9 +++++++++
