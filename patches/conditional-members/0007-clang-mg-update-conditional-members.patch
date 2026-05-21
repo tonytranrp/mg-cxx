@@ -1,19 +1,8 @@
-From 8712ec67455c57879412ff05188cf4cca0fb0d58 Mon Sep 17 00:00:00 2001
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: Mike <michaelgorney4@gmail.com>
 Date: Wed, 20 May 2026 16:00:06 -0400
 Subject: [PATCH 7/7] clang-mg: update conditional-members
 
----
- clang/include/clang/AST/DeclCXX.h             |   2 +
- clang/include/clang/AST/DeclCXXMG.h           | 155 ++++++++++++++++++
- clang/include/clang/AST/RecursiveASTVisitor.h |  10 ++
- clang/include/clang/Basic/DeclNodes.td        |   1 +
- clang/lib/AST/CMakeLists.txt                  |   1 +
- clang/lib/AST/DeclCXXMG.cpp                   |  48 ++++++
- .../lib/Sema/SemaTemplateInstantiateDecl.cpp  |  12 ++
- 7 files changed, 229 insertions(+)
- create mode 100644 clang/include/clang/AST/DeclCXXMG.h
- create mode 100644 clang/lib/AST/DeclCXXMG.cpp
 
 diff --git a/clang/include/clang/AST/DeclCXX.h b/clang/include/clang/AST/DeclCXX.h
 index cc4b4ff9db27..914c8a6276c2 100644

@@ -1,14 +1,8 @@
-From b391d29912f02ae4d4311e16e4ab7ce0b03913ec Mon Sep 17 00:00:00 2001
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: Mike <michaelgorney4@gmail.com>
 Date: Tue, 19 May 2026 14:26:59 -0400
 Subject: [PATCH 6/7] clang-mg: update conditional-members
 
----
- clang/lib/Parse/CMakeLists.txt     |  1 +
- clang/lib/Parse/ParseDeclCXX.cpp   | 50 -------------------------
- clang/lib/Parse/ParseDeclCXXMG.cpp | 59 ++++++++++++++++++++++++++++++
- 3 files changed, 60 insertions(+), 50 deletions(-)
- create mode 100644 clang/lib/Parse/ParseDeclCXXMG.cpp
 
 diff --git a/clang/lib/Parse/CMakeLists.txt b/clang/lib/Parse/CMakeLists.txt
 index 8dd120f529b1..07169bfc9129 100644
