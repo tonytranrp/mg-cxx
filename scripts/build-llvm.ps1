@@ -8,14 +8,16 @@ function Test-IsWindows {
 function Show-Usage {
     $scriptName = if ($PSCommandPath) { $PSCommandPath } else { "scripts/build-llvm.ps1" }
 
-    Write-Host "Usage: $scriptName <llvm-dir> <build-dir> [build-type] [jobs] [--interactive]"
+    Write-Host "Usage: $scriptName <llvm-dir> [build-dir] [build-type] [jobs] [--interactive]"
     Write-Host ""
     Write-Host "Examples:"
-    Write-Host "  $scriptName work/llvm-project work/build"
-    Write-Host "  $scriptName work/llvm-project work/build Release 8"
-    Write-Host "  $scriptName work/llvm-project work/build Release 8 --interactive"
+    Write-Host "  $scriptName work/llvm-project"
+    Write-Host "  $scriptName work/llvm-project work/build-x86_64-pc-windows-msvc"
+    Write-Host "  $scriptName work/llvm-project work/build-x86_64-pc-windows-msvc Release 8"
+    Write-Host "  $scriptName work/llvm-project work/build-x86_64-pc-windows-msvc Release 8 --interactive"
     Write-Host ""
     Write-Host "Environment variables:"
+    Write-Host "  BUILD_TARGET_TRIPLE=x86_64-pc-windows-msvc"
     Write-Host "  CC=<path-or-name>                 Override C compiler"
     Write-Host "  CXX=<path-or-name>                Override C++ compiler"
     Write-Host "  ASM=<path-or-name>                Override ASM compiler"
@@ -49,6 +51,92 @@ function Get-DefaultJobs {
     }
 
     return $count
+}
+
+function Get-NormalizedArchitectureName {
+    $arch = [System.Runtime.InteropServices.RuntimeInformation]::OSArchitecture.ToString()
+
+    switch ($arch) {
+        "X64" {
+            return "x86_64"
+        }
+
+        "X86" {
+            return "i686"
+        }
+
+        "Arm64" {
+            return "aarch64"
+        }
+
+        "Arm" {
+            return "arm"
+        }
+
+        default {
+            return $arch.ToLowerInvariant()
+        }
+    }
+}
+
+function Get-DefaultTargetTriple {
+    $tripleFromEnv = [Environment]::GetEnvironmentVariable("BUILD_TARGET_TRIPLE")
+
+    if (-not [string]::IsNullOrWhiteSpace($tripleFromEnv)) {
+        return $tripleFromEnv
+    }
+
+    foreach ($compiler in @("clang", "clang.exe", "cc", "cc.exe")) {
+        if (-not (Has-Command $compiler)) {
+            continue
+        }
+
+        $output = & $compiler -dumpmachine 2>$null
+
+        if ($LASTEXITCODE -eq 0 -and $output.Count -gt 0) {
+            $triple = "$($output[0])".Trim()
+
+            if (-not [string]::IsNullOrWhiteSpace($triple)) {
+                return $triple
+            }
+        }
+    }
+
+    $arch = Get-NormalizedArchitectureName
+
+    if ([System.Runtime.InteropServices.RuntimeInformation]::IsOSPlatform([System.Runtime.InteropServices.OSPlatform]::Windows)) {
+        return "$arch-pc-windows-msvc"
+    }
+
+    if ([System.Runtime.InteropServices.RuntimeInformation]::IsOSPlatform([System.Runtime.InteropServices.OSPlatform]::OSX)) {
+        if ($arch -eq "aarch64") {
+            return "arm64-apple-darwin"
+        }
+
+        return "$arch-apple-darwin"
+    }
+
+    if ([System.Runtime.InteropServices.RuntimeInformation]::IsOSPlatform([System.Runtime.InteropServices.OSPlatform]::Linux)) {
+        switch ($arch) {
+            "x86_64" {
+                return "x86_64-pc-linux-gnu"
+            }
+
+            "aarch64" {
+                return "aarch64-unknown-linux-gnu"
+            }
+
+            "arm" {
+                return "armv7-unknown-linux-gnueabihf"
+            }
+
+            default {
+                return "$arch-unknown-linux-gnu"
+            }
+        }
+    }
+
+    return "$arch-unknown-platform"
 }
 
 function Prompt-DebugBuild {
@@ -449,6 +537,7 @@ function Remove-BadCMakeCompilerCache {
 }
 
 $LLVM_DIR = ""
+$BUILD_TARGET_TRIPLE = Get-DefaultTargetTriple
 $BUILD_DIR = ""
 $BUILD_TYPE = "Release"
 $JOBS = Get-DefaultJobs
@@ -511,11 +600,11 @@ if ($positional.Count -ge 4) {
     $JOBS = $parsedJobs
 }
 
-if ([string]::IsNullOrWhiteSpace($LLVM_DIR) -or [string]::IsNullOrWhiteSpace($BUILD_DIR)) {
-    Write-Host "ERROR: Missing required arguments."
+if ([string]::IsNullOrWhiteSpace($LLVM_DIR)) {
+    Write-Host "ERROR: Missing LLVM source directory."
     Write-Host ""
     Write-Host "Usage:"
-    Write-Host "  scripts/build-llvm.ps1 <llvm-dir> <build-dir> [build-type] [jobs] [--interactive]"
+    Write-Host "  scripts/build-llvm.ps1 <llvm-dir> [build-dir] [build-type] [jobs] [--interactive]"
     exit 1
 }
 
@@ -525,6 +614,12 @@ if (-not (Test-Path $llvmSourceDir -PathType Container)) {
     Write-Host "ERROR: Could not find LLVM source directory:"
     Write-Host "  $llvmSourceDir"
     exit 1
+}
+
+if ([string]::IsNullOrWhiteSpace($BUILD_DIR)) {
+    $resolvedLlvmDir = (Resolve-Path $LLVM_DIR).Path
+    $llvmParentDir = Split-Path -Parent $resolvedLlvmDir
+    $BUILD_DIR = Join-Path $llvmParentDir "build-$BUILD_TARGET_TRIPLE"
 }
 
 Prompt-DebugBuild
@@ -573,16 +668,17 @@ Remove-BadCMakeCompilerCache $BUILD_DIR
 
 Write-Host ""
 Write-Host "Configuring LLVM build..."
-Write-Host "LLVM dir:    $LLVM_DIR"
-Write-Host "Build dir:   $BUILD_DIR"
-Write-Host "Build type:  $BUILD_TYPE"
-Write-Host "Jobs:        $JOBS"
-Write-Host "Generator:   $GENERATOR"
-Write-Host "Toolchain:   $($toolchain.Name)"
-Write-Host "C compiler:  $($toolchain.C)"
-Write-Host "CXX compiler:$($toolchain.CXX)"
+Write-Host "LLVM dir:      $LLVM_DIR"
+Write-Host "Target triple: $BUILD_TARGET_TRIPLE"
+Write-Host "Build dir:     $BUILD_DIR"
+Write-Host "Build type:    $BUILD_TYPE"
+Write-Host "Jobs:          $JOBS"
+Write-Host "Generator:     $GENERATOR"
+Write-Host "Toolchain:     $($toolchain.Name)"
+Write-Host "C compiler:    $($toolchain.C)"
+Write-Host "CXX compiler:  $($toolchain.CXX)"
 if (-not [string]::IsNullOrWhiteSpace($toolchain.ASM)) {
-    Write-Host "ASM compiler:$($toolchain.ASM)"
+    Write-Host "ASM compiler:  $($toolchain.ASM)"
 }
 Write-Host ""
 

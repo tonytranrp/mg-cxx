@@ -8,6 +8,87 @@ JOBS="${4:-$(sysctl -n hw.ncpu 2>/dev/null || nproc 2>/dev/null || echo 4)}"
 
 INTERACTIVE=0
 
+has_cmd() {
+    command -v "$1" >/dev/null 2>&1
+}
+
+detect_target_triple() {
+    if [[ -n "${BUILD_TARGET_TRIPLE:-}" ]]; then
+        echo "$BUILD_TARGET_TRIPLE"
+        return 0
+    fi
+
+    local triple=""
+
+    if has_cmd clang; then
+        triple="$(clang -dumpmachine 2>/dev/null || true)"
+    elif has_cmd cc; then
+        triple="$(cc -dumpmachine 2>/dev/null || true)"
+    fi
+
+    if [[ -n "$triple" ]]; then
+        echo "$triple"
+        return 0
+    fi
+
+    local os
+    local arch
+
+    os="$(uname -s)"
+    arch="$(uname -m)"
+
+    case "$os" in
+        Darwin)
+            case "$arch" in
+                arm64|aarch64)
+                    echo "arm64-apple-darwin"
+                    ;;
+                x86_64)
+                    echo "x86_64-apple-darwin"
+                    ;;
+                *)
+                    echo "$arch-apple-darwin"
+                    ;;
+            esac
+            ;;
+
+        Linux)
+            case "$arch" in
+                x86_64)
+                    echo "x86_64-pc-linux-gnu"
+                    ;;
+                aarch64|arm64)
+                    echo "aarch64-unknown-linux-gnu"
+                    ;;
+                armv7l)
+                    echo "armv7-unknown-linux-gnueabihf"
+                    ;;
+                *)
+                    echo "$arch-unknown-linux-gnu"
+                    ;;
+            esac
+            ;;
+
+        MINGW*|MSYS*|CYGWIN*)
+            case "$arch" in
+                x86_64)
+                    echo "x86_64-pc-windows-msvc"
+                    ;;
+                aarch64|arm64)
+                    echo "aarch64-pc-windows-msvc"
+                    ;;
+                *)
+                    echo "$arch-pc-windows-msvc"
+                    ;;
+            esac
+            ;;
+
+        *)
+            echo "$arch-unknown-$os"
+            ;;
+    esac
+}
+
 shift $(( $# >= 4 ? 4 : $# ))
 
 while [[ $# -gt 0 ]]; do
@@ -17,12 +98,13 @@ while [[ $# -gt 0 ]]; do
             shift
             ;;
         -h|--help)
-            echo "Usage: $0 <llvm-dir> <build-dir> [build-type] [jobs] [--interactive]"
+            echo "Usage: $0 <llvm-dir> [build-dir] [build-type] [jobs] [--interactive]"
             echo
             echo "Examples:"
-            echo "  $0 work/llvm-project work/build"
-            echo "  $0 work/llvm-project work/build Release 8"
-            echo "  $0 work/llvm-project work/build Release 8 --interactive"
+            echo "  $0 work/llvm-project"
+            echo "  $0 work/llvm-project work/build-x86_64-pc-linux-gnu"
+            echo "  $0 work/llvm-project work/build-x86_64-pc-linux-gnu Release 8"
+            echo "  $0 work/llvm-project work/build-x86_64-pc-linux-gnu Release 8 --interactive"
             exit 0
             ;;
         *)
@@ -32,11 +114,11 @@ while [[ $# -gt 0 ]]; do
     esac
 done
 
-if [[ -z "$LLVM_DIR" || -z "$BUILD_DIR" ]]; then
-    echo "ERROR: Missing required arguments."
+if [[ -z "$LLVM_DIR" ]]; then
+    echo "ERROR: Missing LLVM source directory."
     echo
     echo "Usage:"
-    echo "  $0 <llvm-dir> <build-dir> [build-type] [jobs] [--interactive]"
+    echo "  $0 <llvm-dir> [build-dir] [build-type] [jobs] [--interactive]"
     exit 1
 fi
 
@@ -44,6 +126,13 @@ if [[ ! -d "$LLVM_DIR/llvm" ]]; then
     echo "ERROR: Could not find LLVM source directory:"
     echo "  $LLVM_DIR/llvm"
     exit 1
+fi
+
+BUILD_TARGET_TRIPLE="${BUILD_TARGET_TRIPLE:-$(detect_target_triple)}"
+
+if [[ -z "$BUILD_DIR" ]]; then
+    LLVM_PARENT_DIR="$(cd "$(dirname "$LLVM_DIR")" && pwd)"
+    BUILD_DIR="$LLVM_PARENT_DIR/build-$BUILD_TARGET_TRIPLE"
 fi
 
 prompt_debug_build() {
@@ -73,10 +162,6 @@ prompt_debug_build() {
     esac
 }
 
-has_cmd() {
-    command -v "$1" >/dev/null 2>&1
-}
-
 prompt_debug_build
 
 if has_cmd ninja; then
@@ -91,10 +176,11 @@ fi
 
 echo
 echo "Configuring LLVM build..."
-echo "LLVM dir:    $LLVM_DIR"
-echo "Build dir:   $BUILD_DIR"
-echo "Build type:  $BUILD_TYPE"
-echo "Jobs:        $JOBS"
+echo "LLVM dir:      $LLVM_DIR"
+echo "Target triple: $BUILD_TARGET_TRIPLE"
+echo "Build dir:     $BUILD_DIR"
+echo "Build type:    $BUILD_TYPE"
+echo "Jobs:          $JOBS"
 echo
 
 cmake -S "$LLVM_DIR/llvm" -B "$BUILD_DIR" \

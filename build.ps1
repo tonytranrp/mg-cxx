@@ -37,6 +37,101 @@ function Get-DefaultJobs {
     return "4"
 }
 
+function Has-Command {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$Name
+    )
+
+    return $null -ne (Get-Command $Name -ErrorAction SilentlyContinue)
+}
+
+function Get-NormalizedArchitectureName {
+    $arch = [System.Runtime.InteropServices.RuntimeInformation]::OSArchitecture.ToString()
+
+    switch ($arch) {
+        "X64" {
+            return "x86_64"
+        }
+
+        "X86" {
+            return "i686"
+        }
+
+        "Arm64" {
+            return "aarch64"
+        }
+
+        "Arm" {
+            return "arm"
+        }
+
+        default {
+            return $arch.ToLowerInvariant()
+        }
+    }
+}
+
+function Get-DefaultTargetTriple {
+    $tripleFromEnv = [Environment]::GetEnvironmentVariable("BUILD_TARGET_TRIPLE")
+
+    if (-not [string]::IsNullOrWhiteSpace($tripleFromEnv)) {
+        return $tripleFromEnv
+    }
+
+    foreach ($compiler in @("clang", "clang.exe", "cc", "cc.exe")) {
+        if (-not (Has-Command $compiler)) {
+            continue
+        }
+
+        $output = & $compiler -dumpmachine 2>$null
+
+        if ($LASTEXITCODE -eq 0 -and $output.Count -gt 0) {
+            $triple = "$($output[0])".Trim()
+
+            if (-not [string]::IsNullOrWhiteSpace($triple)) {
+                return $triple
+            }
+        }
+    }
+
+    $arch = Get-NormalizedArchitectureName
+
+    if ([System.Runtime.InteropServices.RuntimeInformation]::IsOSPlatform([System.Runtime.InteropServices.OSPlatform]::Windows)) {
+        return "$arch-pc-windows-msvc"
+    }
+
+    if ([System.Runtime.InteropServices.RuntimeInformation]::IsOSPlatform([System.Runtime.InteropServices.OSPlatform]::OSX)) {
+        if ($arch -eq "aarch64") {
+            return "arm64-apple-darwin"
+        }
+
+        return "$arch-apple-darwin"
+    }
+
+    if ([System.Runtime.InteropServices.RuntimeInformation]::IsOSPlatform([System.Runtime.InteropServices.OSPlatform]::Linux)) {
+        switch ($arch) {
+            "x86_64" {
+                return "x86_64-pc-linux-gnu"
+            }
+
+            "aarch64" {
+                return "aarch64-unknown-linux-gnu"
+            }
+
+            "arm" {
+                return "armv7-unknown-linux-gnueabihf"
+            }
+
+            default {
+                return "$arch-unknown-linux-gnu"
+            }
+        }
+    }
+
+    return "$arch-unknown-platform"
+}
+
 function Test-Truthy {
     param(
         [string]$Value
@@ -110,6 +205,7 @@ function Print-Header {
     Write-Host "Command:       $script:Command"
     Write-Host "LLVM ref:      $script:LlvmRef"
     Write-Host "LLVM dir:      $script:LlvmDir"
+    Write-Host "Target triple: $script:BuildTargetTriple"
     Write-Host "Build dir:     $script:BuildDir"
     Write-Host "Build type:    $script:BuildType"
     Write-Host "Jobs:          $script:Jobs"
@@ -156,7 +252,8 @@ Environment variables:
   LLVM_URL=https://github.com/llvm/llvm-project.git
   WORK_DIR=$($script:RootDir)/work
   LLVM_DIR=$($script:RootDir)/work/llvm-project
-  BUILD_DIR=$($script:RootDir)/work/build
+  BUILD_TARGET_TRIPLE=x86_64-pc-windows-msvc
+  BUILD_DIR=$($script:RootDir)/work/build-<target-triple>
   BUILD_TYPE=Debug
   JOBS=4
   FEATURE_CONFIG_NAME=feature.conf
@@ -419,11 +516,20 @@ function Run-ApplyFeatures {
 function Run-Build {
     Require-LlvmRepo
 
-    if ($script:Interactive -eq 1) {
-        Invoke-External $script:BuildLlvmScript $script:LlvmDir $script:BuildDir $script:BuildType $script:Jobs "--interactive"
+    $oldBuildTargetTriple = $env:BUILD_TARGET_TRIPLE
+
+    try {
+        $env:BUILD_TARGET_TRIPLE = $script:BuildTargetTriple
+
+        if ($script:Interactive -eq 1) {
+            Invoke-External $script:BuildLlvmScript $script:LlvmDir $script:BuildDir $script:BuildType $script:Jobs "--interactive"
+        }
+        else {
+            Invoke-External $script:BuildLlvmScript $script:LlvmDir $script:BuildDir $script:BuildType $script:Jobs
+        }
     }
-    else {
-        Invoke-External $script:BuildLlvmScript $script:LlvmDir $script:BuildDir $script:BuildType $script:Jobs
+    finally {
+        $env:BUILD_TARGET_TRIPLE = $oldBuildTargetTriple
     }
 }
 
@@ -487,7 +593,9 @@ $script:LlvmRef = Get-EnvOrDefault "LLVM_REF" "main"
 
 $script:WorkDir = Get-EnvOrDefault "WORK_DIR" (Join-Path $script:RootDir "work")
 $script:LlvmDir = Get-EnvOrDefault "LLVM_DIR" (Join-Path $script:WorkDir "llvm-project")
-$script:BuildDir = Get-EnvOrDefault "BUILD_DIR" (Join-Path $script:WorkDir "build")
+
+$script:BuildTargetTriple = Get-DefaultTargetTriple
+$script:BuildDir = Get-EnvOrDefault "BUILD_DIR" (Join-Path $script:WorkDir "build-$($script:BuildTargetTriple)")
 
 $script:BuildType = Get-EnvOrDefault "BUILD_TYPE" "Release"
 $script:Jobs = Get-DefaultJobs

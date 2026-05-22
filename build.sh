@@ -3,12 +3,95 @@ set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
+has_cmd() {
+    command -v "$1" >/dev/null 2>&1
+}
+
+detect_target_triple() {
+    if [[ -n "${BUILD_TARGET_TRIPLE:-}" ]]; then
+        echo "$BUILD_TARGET_TRIPLE"
+        return 0
+    fi
+
+    local triple=""
+
+    if has_cmd clang; then
+        triple="$(clang -dumpmachine 2>/dev/null || true)"
+    elif has_cmd cc; then
+        triple="$(cc -dumpmachine 2>/dev/null || true)"
+    fi
+
+    if [[ -n "$triple" ]]; then
+        echo "$triple"
+        return 0
+    fi
+
+    local os
+    local arch
+
+    os="$(uname -s)"
+    arch="$(uname -m)"
+
+    case "$os" in
+        Darwin)
+            case "$arch" in
+                arm64|aarch64)
+                    echo "arm64-apple-darwin"
+                    ;;
+                x86_64)
+                    echo "x86_64-apple-darwin"
+                    ;;
+                *)
+                    echo "$arch-apple-darwin"
+                    ;;
+            esac
+            ;;
+
+        Linux)
+            case "$arch" in
+                x86_64)
+                    echo "x86_64-pc-linux-gnu"
+                    ;;
+                aarch64|arm64)
+                    echo "aarch64-unknown-linux-gnu"
+                    ;;
+                armv7l)
+                    echo "armv7-unknown-linux-gnueabihf"
+                    ;;
+                *)
+                    echo "$arch-unknown-linux-gnu"
+                    ;;
+            esac
+            ;;
+
+        MINGW*|MSYS*|CYGWIN*)
+            case "$arch" in
+                x86_64)
+                    echo "x86_64-pc-windows-msvc"
+                    ;;
+                aarch64|arm64)
+                    echo "aarch64-pc-windows-msvc"
+                    ;;
+                *)
+                    echo "$arch-pc-windows-msvc"
+                    ;;
+            esac
+            ;;
+
+        *)
+            echo "$arch-unknown-$os"
+            ;;
+    esac
+}
+
 LLVM_URL="${LLVM_URL:-https://github.com/llvm/llvm-project.git}"
 LLVM_REF="${LLVM_REF:-main}"
 
 WORK_DIR="${WORK_DIR:-$ROOT_DIR/work}"
 LLVM_DIR="${LLVM_DIR:-$WORK_DIR/llvm-project}"
-BUILD_DIR="${BUILD_DIR:-$WORK_DIR/build}"
+
+BUILD_TARGET_TRIPLE="${BUILD_TARGET_TRIPLE:-$(detect_target_triple)}"
+BUILD_DIR="${BUILD_DIR:-$WORK_DIR/build-$BUILD_TARGET_TRIPLE}"
 
 BUILD_TYPE="${BUILD_TYPE:-Release}"
 JOBS="${JOBS:-$(sysctl -n hw.ncpu 2>/dev/null || nproc 2>/dev/null || echo 4)}"
@@ -38,6 +121,7 @@ print_header() {
     echo "Command:       $COMMAND"
     echo "LLVM ref:      $LLVM_REF"
     echo "LLVM dir:      $LLVM_DIR"
+    echo "Target triple: $BUILD_TARGET_TRIPLE"
     echo "Build dir:     $BUILD_DIR"
     echo "Build type:    $BUILD_TYPE"
     echo "Jobs:          $JOBS"
@@ -84,7 +168,8 @@ Environment variables:
   LLVM_URL=https://github.com/llvm/llvm-project.git
   WORK_DIR=$ROOT_DIR/work
   LLVM_DIR=$ROOT_DIR/work/llvm-project
-  BUILD_DIR=$ROOT_DIR/work/build
+  BUILD_TARGET_TRIPLE=x86_64-pc-linux-gnu
+  BUILD_DIR=$ROOT_DIR/work/build-\$BUILD_TARGET_TRIPLE
   BUILD_TYPE=Debug
   JOBS=4
   FEATURE_CONFIG_NAME=feature.conf

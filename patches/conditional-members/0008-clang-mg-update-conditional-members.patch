@@ -378,10 +378,10 @@ index de837ff0608d..53652dd30b73 100644
  
    if (isInstField) {
 diff --git a/clang/lib/Sema/SemaTemplateInstantiate.cpp b/clang/lib/Sema/SemaTemplateInstantiate.cpp
-index 3c9ffdb42eee..f2cfb63cb3ca 100644
+index f168c99d1ac1..c29eef928fb7 100644
 --- a/clang/lib/Sema/SemaTemplateInstantiate.cpp
 +++ b/clang/lib/Sema/SemaTemplateInstantiate.cpp
-@@ -3613,7 +3613,47 @@ bool Sema::InstantiateClassImpl(
+@@ -3586,7 +3586,47 @@ bool Sema::InstantiateClassImpl(
    Instantiator.enableLateAttributeInstantiation(&LateAttrs);
  
    bool MightHaveConstexprVirtualFunctions = false;
@@ -429,7 +429,7 @@ index 3c9ffdb42eee..f2cfb63cb3ca 100644
      // Don't instantiate members not belonging in this semantic context.
      // e.g. for:
      // @code
-@@ -3639,37 +3679,46 @@ bool Sema::InstantiateClassImpl(
+@@ -3612,37 +3652,46 @@ bool Sema::InstantiateClassImpl(
        continue;
      }
  
@@ -504,7 +504,7 @@ index 3c9ffdb42eee..f2cfb63cb3ca 100644
        // FIXME: Eventually, a NULL return will mean that one of the
        // instantiations was a semantic disaster, and we'll want to mark the
 diff --git a/clang/lib/Sema/SemaTemplateInstantiateDecl.cpp b/clang/lib/Sema/SemaTemplateInstantiateDecl.cpp
-index 4fcc6f886258..7582814415f3 100644
+index 551cc0909686..cb8e412100bc 100644
 --- a/clang/lib/Sema/SemaTemplateInstantiateDecl.cpp
 +++ b/clang/lib/Sema/SemaTemplateInstantiateDecl.cpp
 @@ -1912,9 +1912,28 @@ Decl *TemplateDeclInstantiator::VisitFieldDecl(FieldDecl *D) {
@@ -537,5 +537,5 @@ index 4fcc6f886258..7582814415f3 100644
    if (CXXRecordDecl *Parent= dyn_cast<CXXRecordDecl>(Field->getDeclContext())) {
      if (Parent->isAnonymousStructOrUnion() &&
 -- 
-2.52.0.windows.1
+2.54.0
 

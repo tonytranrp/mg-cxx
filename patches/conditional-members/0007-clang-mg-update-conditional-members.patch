@@ -278,7 +278,7 @@ index 000000000000..7b4450f48b5e
 +}
 \ No newline at end of file
 diff --git a/clang/lib/Sema/SemaTemplateInstantiateDecl.cpp b/clang/lib/Sema/SemaTemplateInstantiateDecl.cpp
-index ce0e390e371e..4fcc6f886258 100644
+index c9bc613a7c4e..551cc0909686 100644
 --- a/clang/lib/Sema/SemaTemplateInstantiateDecl.cpp
 +++ b/clang/lib/Sema/SemaTemplateInstantiateDecl.cpp
 @@ -4767,6 +4767,18 @@ Decl *Sema::SubstDecl(Decl *D, DeclContext *Owner,
@@ -301,5 +301,5 @@ index ce0e390e371e..4fcc6f886258 100644
                                                  FunctionDecl *Orig, QualType &T,
                                                  TypeSourceInfo *&TInfo,
 -- 
-2.52.0.windows.1
+2.54.0
 
