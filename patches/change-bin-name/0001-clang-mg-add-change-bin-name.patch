@@ -49,5 +49,5 @@ index 002aaef00525..0ca3b7dc194c 100644
  
  if (CLANG_ENABLE_HLSL)
 -- 
-2.52.0.windows.1
+2.54.0
 
