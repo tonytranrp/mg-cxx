@@ -174,6 +174,19 @@ else
     exit 1
 fi
 
+CMAKE_CONFIGURE_ARGS=(
+    -G "$GENERATOR"
+    "-DLLVM_ENABLE_PROJECTS=clang"
+    "-DCMAKE_BUILD_TYPE=$BUILD_TYPE"
+    "-DLLVM_ENABLE_ASSERTIONS=ON"
+)
+
+if [[ "$(uname -s)" == "Darwin" ]]; then
+    CMAKE_CONFIGURE_ARGS+=(
+        "-DCLANG_USE_XCSELECT=ON"
+    )
+fi
+
 echo
 echo "Configuring LLVM build..."
 echo "LLVM dir:      $LLVM_DIR"
@@ -181,13 +194,11 @@ echo "Target triple: $BUILD_TARGET_TRIPLE"
 echo "Build dir:     $BUILD_DIR"
 echo "Build type:    $BUILD_TYPE"
 echo "Jobs:          $JOBS"
+echo "CMake args:    ${CMAKE_CONFIGURE_ARGS[*]}"
 echo
 
 cmake -S "$LLVM_DIR/llvm" -B "$BUILD_DIR" \
-    -G "$GENERATOR" \
-    -DLLVM_ENABLE_PROJECTS="clang" \
-    -DCMAKE_BUILD_TYPE="$BUILD_TYPE" \
-    -DLLVM_ENABLE_ASSERTIONS=ON
+    "${CMAKE_CONFIGURE_ARGS[@]}"
 
 echo
 echo "Building clang..."

@@ -1,0 +1,56 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Mike <michaelgorney4@gmail.com>
+Date: Sat, 23 May 2026 00:08:28 -0400
+Subject: [PATCH] clang-mg: add mac-sdk-discovery
+
+
+diff --git a/clang/lib/Driver/ToolChains/Darwin.cpp b/clang/lib/Driver/ToolChains/Darwin.cpp
+index 8552832a1f60..8cf0627a3515 100644
+--- a/clang/lib/Driver/ToolChains/Darwin.cpp
++++ b/clang/lib/Driver/ToolChains/Darwin.cpp
+@@ -2571,23 +2571,32 @@ void Darwin::AddDeploymentTarget(DerivedArgList &Args) const {
+   bool TryXcselect = false;
+   (void)TryXcselect;
+ 
+-  // Support allowing the SDKROOT environment variable used by xcrun and other
++    // Support allowing the SDKROOT environment variable used by xcrun and other
+   // Xcode tools to define the default sysroot, by making it the default for
+   // isysroot.
+   if (const Arg *A = Args.getLastArg(options::OPT_isysroot)) {
+     // Warn if the path does not exist.
+     if (!getVFS().exists(A->getValue()))
+       getDriver().Diag(clang::diag::warn_missing_sysroot) << A->getValue();
+-  } else if (const char *env = ::getenv("SDKROOT")) {
+-    // We only use this value as the default if it is an absolute path,
+-    // exists, and it is not the root path.
+-    if (llvm::sys::path::is_absolute(env) && getVFS().exists(env) &&
+-        StringRef(env) != "/") {
+-      Args.append(Args.MakeSeparateArg(
+-          nullptr, Opts.getOption(options::OPT_isysroot), env));
+-    }
+   } else {
+-    TryXcselect = !Args.hasArg(options::OPT__sysroot_EQ) &&
++    bool AddedSDKRoot = false;
++
++    // We only use SDKROOT as the default if it is an absolute path, exists,
++    // and is not the root path. If SDKROOT is unset or invalid, fall through
++    // to xcselect below.
++    if (!Args.hasArg(options::OPT__sysroot_EQ)) {
++      if (const char *env = ::getenv("SDKROOT")) {
++        if (llvm::sys::path::is_absolute(env) && getVFS().exists(env) &&
++            StringRef(env) != "/") {
++          Args.append(Args.MakeSeparateArg(
++              nullptr, Opts.getOption(options::OPT_isysroot), env));
++          AddedSDKRoot = true;
++        }
++      }
++    }
++
++    TryXcselect = !AddedSDKRoot &&
++                  !Args.hasArg(options::OPT__sysroot_EQ) &&
+                   !Args.hasArg(options::OPT_no_xcselect);
+   }
+ 
+-- 
+2.54.0
+
