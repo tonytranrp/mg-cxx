@@ -1,0 +1,258 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Mike <michaelgorney4@gmail.com>
+Date: Sun, 24 May 2026 00:52:41 -0400
+Subject: [PATCH 5/6] clang-mg: update type-expressions
+
+
+diff --git a/clang/include/clang/Parse/Parser.h b/clang/include/clang/Parse/Parser.h
+index cbe944523201..d6198a4f6df8 100644
+--- a/clang/include/clang/Parse/Parser.h
++++ b/clang/include/clang/Parse/Parser.h
+@@ -3358,10 +3358,13 @@ private:
+                                bool AllowPredicates) const;
+   bool TryParseCXXMGTypeExpression(ParsedCXXMGTypeExpr &Out,
+                                    bool AllowPredicates,
+-                                   bool RequireTypeProducingResult);
+-  bool ParseCXXMGTypeExprPrimary(ParsedCXXMGTypeExpr &Out);
++                                   bool RequireTypeProducingResult,
++                                   bool AllowTypeNameFallback = true);
++  bool ParseCXXMGTypeExprPrimary(ParsedCXXMGTypeExpr &Out,
++                                 bool AllowTypeNameFallback = true);
+   bool ParseCXXMGTypeExprRHS(ParsedCXXMGTypeExpr &LHS, prec::Level MinPrec,
+-                             bool AllowPredicates);
++                             bool AllowPredicates,
++                             bool AllowTypeNameFallback = true);
+   ExprResult TryParseCXXMGTypePredicateExpression();
+ 
+   /// ParseStaticAssertDeclaration - Parse C++0x or C11
+diff --git a/clang/lib/Parse/ParseCXXMGTypeExpr.cpp b/clang/lib/Parse/ParseCXXMGTypeExpr.cpp
+index d36514d82a1b..e1f167655a3c 100644
+--- a/clang/lib/Parse/ParseCXXMGTypeExpr.cpp
++++ b/clang/lib/Parse/ParseCXXMGTypeExpr.cpp
+@@ -19,9 +19,12 @@ static const char *getCXXMGTypeExprOperatorSpelling(tok::TokenKind K) {
+ 
+ static bool mayStartCXXMGTypePredicate(Parser &P) {
+   tok::TokenKind K = P.getCurToken().getKind();
+-  if (K == tok::annot_typename || K == tok::kw_typename ||
+-      K == tok::kw_decltype || K == tok::kw_struct || K == tok::kw_class ||
+-      K == tok::kw_trait)
++  if (K == tok::annot_typename)
++    return P.NextToken().isOneOf(tok::plus, tok::minus, tok::ampamp,
++                                 tok::pipepipe);
++
++  if (K == tok::kw_typename || K == tok::kw_decltype ||
++      K == tok::kw_struct || K == tok::kw_class || K == tok::kw_trait)
+     return true;
+ 
+   if (K == tok::identifier) {
+@@ -50,7 +53,42 @@ bool Parser::isCXXMGTypeExprOperator(tok::TokenKind K,
+   return false;
+ }
+ 
+-bool Parser::ParseCXXMGTypeExprPrimary(ParsedCXXMGTypeExpr &Out) {
++bool Parser::ParseCXXMGTypeExprPrimary(ParsedCXXMGTypeExpr &Out,
++                                       bool AllowTypeNameFallback) {
++  if (Tok.is(tok::identifier) &&
++      NextToken().isOneOf(tok::plus, tok::minus, tok::ampamp,
++                          tok::pipepipe)) {
++    if (TryAnnotateTypeOrScopeToken())
++      return false;
++  }
++
++  if (Tok.is(tok::annot_typename) &&
++      NextToken().isOneOf(tok::plus, tok::minus, tok::ampamp,
++                          tok::pipepipe)) {
++    SourceRange Range = Tok.getAnnotationRange();
++    ParsedType Ty = getTypeAnnotation(Tok).get();
++    if (!Ty)
++      return false;
++    ConsumeAnnotationToken();
++
++    TypeSourceInfo *TSI = nullptr;
++    QualType QT = Actions.GetTypeFromParser(Ty, &TSI);
++    if (QT.isNull())
++      return false;
++    SourceLocation Begin = Range.getBegin().isValid() ? Range.getBegin()
++                                                      : Tok.getLocation();
++    if (!TSI)
++      TSI = Actions.getASTContext().getTrivialTypeSourceInfo(QT, Begin);
++
++    Out = ParsedCXXMGTypeExpr();
++    Out.K = ParsedCXXMGTypeExpr::Operand;
++    Out.OperandType = Ty;
++    Out.OperandTSI = TSI;
++    Out.BeginLoc = Begin;
++    Out.EndLoc = Range.getEnd().isValid() ? Range.getEnd() : Begin;
++    return true;
++  }
++
+   if (Tok.is(tok::identifier) &&
+       NextToken().isOneOf(tok::plus, tok::minus, tok::ampamp,
+                           tok::pipepipe)) {
+@@ -80,10 +118,11 @@ bool Parser::ParseCXXMGTypeExprPrimary(ParsedCXXMGTypeExpr &Out) {
+   if (Tok.is(tok::l_paren)) {
+     SourceLocation LParen = ConsumeParen();
+     ParsedCXXMGTypeExpr Inner;
+-    if (!ParseCXXMGTypeExprPrimary(Inner))
++    if (!ParseCXXMGTypeExprPrimary(Inner, AllowTypeNameFallback))
+       return false;
+     if (!ParseCXXMGTypeExprRHS(Inner, prec::Unknown,
+-                               /*AllowPredicates=*/true))
++                               /*AllowPredicates=*/true,
++                               AllowTypeNameFallback))
+       return false;
+     if (Tok.isNot(tok::r_paren))
+       return false;
+@@ -93,6 +132,9 @@ bool Parser::ParseCXXMGTypeExprPrimary(ParsedCXXMGTypeExpr &Out) {
+     return true;
+   }
+ 
++  if (!AllowTypeNameFallback)
++    return false;
++
+   SourceLocation Begin = Tok.getLocation();
+   SourceRange Range;
+   TypeResult TR = ParseTypeName(&Range);
+@@ -117,7 +159,8 @@ bool Parser::ParseCXXMGTypeExprPrimary(ParsedCXXMGTypeExpr &Out) {
+ 
+ bool Parser::ParseCXXMGTypeExprRHS(ParsedCXXMGTypeExpr &LHS,
+                                    prec::Level MinPrec,
+-                                   bool AllowPredicates) {
++                                   bool AllowPredicates,
++                                   bool AllowTypeNameFallback) {
+   while (true) {
+     tok::TokenKind Op = Tok.getKind();
+     if (!isCXXMGTypeExprOperator(Op, AllowPredicates))
+@@ -136,7 +179,10 @@ bool Parser::ParseCXXMGTypeExprRHS(ParsedCXXMGTypeExpr &LHS,
+ 
+     SourceLocation OpLoc = ConsumeToken();
+     ParsedCXXMGTypeExpr RHS;
+-    if (!ParseCXXMGTypeExprPrimary(RHS))
++    // Once a C++MG operator has been consumed, the RHS is no longer an
++    // arbitrary expression probe; it must be parsed as a type operand.
++    if (!ParseCXXMGTypeExprPrimary(RHS,
++                                   /*AllowTypeNameFallback=*/true))
+       return false;
+ 
+     tok::TokenKind NextOp = Tok.getKind();
+@@ -147,7 +193,7 @@ bool Parser::ParseCXXMGTypeExprRHS(ParsedCXXMGTypeExpr &LHS,
+                                : prec::Unknown;
+     if (NextPrec > OpPrec &&
+         !ParseCXXMGTypeExprRHS(RHS, static_cast<prec::Level>(OpPrec + 1),
+-                               AllowPredicates))
++                               AllowPredicates, AllowTypeNameFallback))
+       return false;
+ 
+     auto Node = std::make_unique<ParsedCXXMGTypeExpr>();
+@@ -165,13 +211,15 @@ bool Parser::ParseCXXMGTypeExprRHS(ParsedCXXMGTypeExpr &LHS,
+ 
+ bool Parser::TryParseCXXMGTypeExpression(ParsedCXXMGTypeExpr &Out,
+                                          bool AllowPredicates,
+-                                         bool RequireTypeProducingResult) {
++                                         bool RequireTypeProducingResult,
++                                         bool AllowTypeNameFallback) {
+   if (!getLangOpts().CPlusPlusMG)
+     return false;
+ 
+-  if (!ParseCXXMGTypeExprPrimary(Out))
++  if (!ParseCXXMGTypeExprPrimary(Out, AllowTypeNameFallback))
+     return false;
+-  if (!ParseCXXMGTypeExprRHS(Out, prec::Unknown, AllowPredicates))
++  if (!ParseCXXMGTypeExprRHS(Out, prec::Unknown, AllowPredicates,
++                             AllowTypeNameFallback))
+     return false;
+ 
+   if (RequireTypeProducingResult && Out.K == ParsedCXXMGTypeExpr::Binary &&
+@@ -194,7 +242,8 @@ ExprResult Parser::TryParseCXXMGTypePredicateExpression() {
+   TentativeParsingAction TPA(*this);
+   ParsedCXXMGTypeExpr TE;
+   if (!TryParseCXXMGTypeExpression(TE, /*AllowPredicates=*/true,
+-                                   /*RequireTypeProducingResult=*/false) ||
++                                   /*RequireTypeProducingResult=*/false,
++                                   /*AllowTypeNameFallback=*/false) ||
+       !TE.SawTypeExprOperator) {
+     TPA.Revert();
+     return ExprEmpty();
+diff --git a/clang/lib/Parse/ParseDeclCXX.cpp b/clang/lib/Parse/ParseDeclCXX.cpp
+index fc50fd51770b..12480e41a7ba 100644
+--- a/clang/lib/Parse/ParseDeclCXX.cpp
++++ b/clang/lib/Parse/ParseDeclCXX.cpp
+@@ -925,7 +925,8 @@ Decl *Parser::ParseAliasDeclarationAfterDeclarator(
+                                                     : TE.BeginLoc;
+ 
+       if (!ParseCXXMGTypeExprRHS(TE, prec::Unknown,
+-                                 /*AllowPredicates=*/false)) {
++                                 /*AllowPredicates=*/false,
++                                 /*AllowTypeNameFallback=*/true)) {
+         TypeAlias = true;
+       } else if (!TE.SawTypeExprOperator) {
+         TypeAlias = true;
+diff --git a/clang/test/CXXMG/type-expressions/type-expr-alias-parse-once-positive.cpp b/clang/test/CXXMG/type-expressions/type-expr-alias-parse-once-positive.cpp
+index cccd555ee571..f31eb6428917 100644
+--- a/clang/test/CXXMG/type-expressions/type-expr-alias-parse-once-positive.cpp
++++ b/clang/test/CXXMG/type-expressions/type-expr-alias-parse-once-positive.cpp
+@@ -1,4 +1,4 @@
+-// RUN: %clang_cc1 -std=c++14 -Wno-non-c-typedef-for-linkage -fsyntax-only -verify %s
++// RUN: %clang_cc1 -std=c++14 -fcxxmg -Wno-non-c-typedef-for-linkage -fsyntax-only -verify %s
+ 
+ // expected-no-diagnostics
+ 
+diff --git a/clang/test/CXXMG/type-expressions/type-expr-do-not-hijack-alias-template-args.cpp b/clang/test/CXXMG/type-expressions/type-expr-do-not-hijack-alias-template-args.cpp
+index 99f1d97bc0af..8c13c15cb591 100644
+--- a/clang/test/CXXMG/type-expressions/type-expr-do-not-hijack-alias-template-args.cpp
++++ b/clang/test/CXXMG/type-expressions/type-expr-do-not-hijack-alias-template-args.cpp
+@@ -1,4 +1,4 @@
+-// RUN: %clang_cc1 -std=c++14 -fsyntax-only -verify %s
++// RUN: %clang_cc1 -std=c++14 -fcxxmg -fsyntax-only -verify %s
+ 
+ // expected-no-diagnostics
+ 
+diff --git a/clang/test/CXXMG/type-expressions/type-expr-do-not-hijack-function-style-construction.cpp b/clang/test/CXXMG/type-expressions/type-expr-do-not-hijack-function-style-construction.cpp
+new file mode 100644
+index 000000000000..19cbeec14531
+--- /dev/null
++++ b/clang/test/CXXMG/type-expressions/type-expr-do-not-hijack-function-style-construction.cpp
+@@ -0,0 +1,21 @@
++// RUN: %clang_cc1 -std=c++14 -fcxxmg -fcxx-exceptions -fexceptions -fsyntax-only -verify %s
++
++// expected-no-diagnostics
++
++class failure {
++public:
++  explicit failure(const char *);
++};
++
++void test_throw() {
++  const char *_Msg = "badbit";
++  throw failure(_Msg);
++}
++
++struct shared_ptr {
++  explicit shared_ptr(int);
++};
++
++void test_function_style_construction(int _Right) {
++  (void) shared_ptr(_Right);
++}
+diff --git a/clang/test/CXXMG/type-expressions/type-expr-predicate-no-typename-fallback.cpp b/clang/test/CXXMG/type-expressions/type-expr-predicate-no-typename-fallback.cpp
+new file mode 100644
+index 000000000000..f28d1db01507
+--- /dev/null
++++ b/clang/test/CXXMG/type-expressions/type-expr-predicate-no-typename-fallback.cpp
+@@ -0,0 +1,13 @@
++// RUN: %clang_cc1 -std=c++14 -fcxxmg -fsyntax-only -verify %s
++
++// expected-no-diagnostics
++
++trait HasValue {
++  int value;
++};
++
++struct A {
++  int value;
++};
++
++static_assert(HasValue && A, "");
+-- 
+2.52.0.windows.1
+
