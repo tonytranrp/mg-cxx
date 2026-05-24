@@ -1022,5 +1022,5 @@ index 000000000000..689ee6791de1
 +// CHECK: TraitRequirementDecl {{.*}} type AssociatedTypeAny
 +// CHECK: TraitRequirementDecl {{.*}} staticFn StaticFunctionAnyReturn
 -- 
-2.52.0.windows.1
+2.54.0
 

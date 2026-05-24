@@ -19,5 +19,5 @@ index 0de69dbceead..fca2cdb811ae 100644
      if (tok::isPragmaAnnotation(Tok.getKind())) {
        Diag(Tok.getLocation(), diag::err_pragma_misplaced_in_decl)
 -- 
-2.52.0.windows.1
+2.54.0
 
