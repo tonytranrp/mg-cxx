@@ -284,10 +284,10 @@ index 60749104252a..0d85b1d9d70a 100644
    // preprocessor as we never want to emit the
    // "editor placeholder in source file" error in PP only mode.
 diff --git a/clang/lib/Frontend/InitPreprocessor.cpp b/clang/lib/Frontend/InitPreprocessor.cpp
-index 8aa0faebe182..2728233bfdd2 100644
+index 6656f2bd076c..70f105a0fd0b 100644
 --- a/clang/lib/Frontend/InitPreprocessor.cpp
 +++ b/clang/lib/Frontend/InitPreprocessor.cpp
-@@ -858,6 +858,8 @@ static void InitializePredefinedMacros(const TargetInfo &TI,
+@@ -859,6 +859,8 @@ static void InitializePredefinedMacros(const TargetInfo &TI,
    Builder.defineMacro("__clang_version__",
                        "\"" CLANG_VERSION_STRING " "
                        + getClangFullRepositoryVersion() + "\"");
@@ -795,7 +795,7 @@ index f76155b1c45d..8f9acf2b7e2e 100644
      Kind = InclusionDirective::Import;
      break;
 diff --git a/clang/lib/Serialization/ASTReader.cpp b/clang/lib/Serialization/ASTReader.cpp
-index 74a7b51368c2..bb52ab1a9cd6 100644
+index 00f251300438..a48e3949e2e2 100644
 --- a/clang/lib/Serialization/ASTReader.cpp
 +++ b/clang/lib/Serialization/ASTReader.cpp
 @@ -7009,6 +7009,10 @@ PreprocessedEntity *ASTReader::ReadPreprocessedEntity(unsigned Index) {
@@ -810,10 +810,10 @@ index 74a7b51368c2..bb52ab1a9cd6 100644
      InclusionDirective::InclusionKind Kind
        = static_cast<InclusionDirective::InclusionKind>(Record[2]);
 diff --git a/clang/lib/Serialization/ASTWriter.cpp b/clang/lib/Serialization/ASTWriter.cpp
-index 074b0fccdb65..d3c6ac7a97ce 100644
+index 8df1550a55dc..de702a32e2c1 100644
 --- a/clang/lib/Serialization/ASTWriter.cpp
 +++ b/clang/lib/Serialization/ASTWriter.cpp
-@@ -2858,7 +2858,7 @@ void ASTWriter::WritePreprocessorDetail(PreprocessingRecord &PPRec,
+@@ -2863,7 +2863,7 @@ void ASTWriter::WritePreprocessorDetail(PreprocessingRecord &PPRec,
      Abbrev->Add(BitCodeAbbrevOp(PPD_INCLUSION_DIRECTIVE));
      Abbrev->Add(BitCodeAbbrevOp(BitCodeAbbrevOp::Fixed, 32)); // filename length
      Abbrev->Add(BitCodeAbbrevOp(BitCodeAbbrevOp::Fixed, 1)); // in quotes

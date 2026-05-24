@@ -1,0 +1,157 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Mike <michaelgorney4@gmail.com>
+Date: Sun, 24 May 2026 00:38:05 -0400
+Subject: [PATCH 4/5] clang-mg: update type-expressions
+
+
+diff --git a/clang/lib/Parse/ParseDeclCXX.cpp b/clang/lib/Parse/ParseDeclCXX.cpp
+index ebdbb8af6f23..fc50fd51770b 100644
+--- a/clang/lib/Parse/ParseDeclCXX.cpp
++++ b/clang/lib/Parse/ParseDeclCXX.cpp
+@@ -889,38 +889,63 @@ Decl *Parser::ParseAliasDeclarationAfterDeclarator(
+         << FixItHint::CreateRemoval(SourceRange(D.EllipsisLoc));
+ 
+   Decl *DeclFromDeclSpec = nullptr;
+-  TypeResult TypeAlias;
+-  if (getLangOpts().CPlusPlusMG) {
+-    TentativeParsingAction TPA(*this);
++  DeclaratorContext AliasContext =
++      TemplateInfo.Kind != ParsedTemplateKind::NonTemplate
++          ? DeclaratorContext::AliasTemplate
++          : DeclaratorContext::AliasDecl;
++  SourceRange FirstTypeRange;
++  TypeResult TypeAlias =
++      ParseTypeName(&FirstTypeRange, AliasContext, AS, &DeclFromDeclSpec,
++                    &Attrs);
++
++  if (getLangOpts().CPlusPlusMG && TypeAlias.isUsable() &&
++      Tok.isOneOf(tok::plus, tok::minus)) {
+     ParsedCXXMGTypeExpr TE;
+-    bool ParsedTE = TryParseCXXMGTypeExpression(
+-        TE, /*AllowPredicates=*/false, /*RequireTypeProducingResult=*/true);
+-    if (ParsedTE && TE.SawTypeExprOperator && Tok.is(tok::semi)) {
+-      TPA.Commit();
+-      TemplateParameterLists *TemplateParams = TemplateInfo.TemplateParams;
+-      MultiTemplateParamsArg TemplateParamsArg(
+-          TemplateParams ? TemplateParams->data() : nullptr,
+-          TemplateParams ? TemplateParams->size() : 0);
+-      TypeAlias = Actions.ActOnCXXMGTypeAliasExpression(
+-          getCurScope(), AS, TemplateParamsArg, UsingLoc, D.Name, Attrs, TE,
+-          &DeclFromDeclSpec);
++
++    TypeSourceInfo *TSI = nullptr;
++    QualType QT = Actions.GetTypeFromParser(TypeAlias.get(), &TSI);
++    if (QT.isNull()) {
++      TypeAlias = true;
+     } else {
+-      TPA.Revert();
+-      TypeAlias = ParseTypeName(
+-          nullptr,
+-          TemplateInfo.Kind != ParsedTemplateKind::NonTemplate
+-              ? DeclaratorContext::AliasTemplate
+-              : DeclaratorContext::AliasDecl,
+-          AS, &DeclFromDeclSpec, &Attrs);
++      if (!TSI) {
++        SourceLocation Loc = FirstTypeRange.getBegin().isValid()
++                                 ? FirstTypeRange.getBegin()
++                                 : UsingLoc;
++        TSI = Actions.getASTContext().getTrivialTypeSourceInfo(QT, Loc);
++      }
++
++      TE = ParsedCXXMGTypeExpr();
++      TE.K = ParsedCXXMGTypeExpr::Operand;
++      TE.OperandType = TypeAlias.get();
++      TE.OperandTSI = TSI;
++      TE.BeginLoc = FirstTypeRange.getBegin().isValid()
++                        ? FirstTypeRange.getBegin()
++                        : UsingLoc;
++      TE.EndLoc = FirstTypeRange.getEnd().isValid() ? FirstTypeRange.getEnd()
++                                                    : TE.BeginLoc;
++
++      if (!ParseCXXMGTypeExprRHS(TE, prec::Unknown,
++                                 /*AllowPredicates=*/false)) {
++        TypeAlias = true;
++      } else if (!TE.SawTypeExprOperator) {
++        TypeAlias = true;
++      } else if (Tok.isNot(tok::semi)) {
++        Diag(Tok.getLocation(), diag::err_expected_semi_declaration);
++        TypeAlias = true;
++      } else {
++        TemplateParameterLists *TemplateParams = TemplateInfo.TemplateParams;
++        MultiTemplateParamsArg TemplateParamsArg(
++            TemplateParams ? TemplateParams->data() : nullptr,
++            TemplateParams ? TemplateParams->size() : 0);
++
++        DeclFromDeclSpec = nullptr;
++        TypeAlias = Actions.ActOnCXXMGTypeAliasExpression(
++            getCurScope(), AS, TemplateParamsArg, UsingLoc, D.Name, Attrs, TE,
++            &DeclFromDeclSpec);
++      }
+     }
+-  } else {
+-    TypeAlias = ParseTypeName(
+-        nullptr,
+-        TemplateInfo.Kind != ParsedTemplateKind::NonTemplate
+-            ? DeclaratorContext::AliasTemplate
+-            : DeclaratorContext::AliasDecl,
+-        AS, &DeclFromDeclSpec, &Attrs);
+   }
++
+   if (OwnedType)
+     *OwnedType = DeclFromDeclSpec;
+ 
+diff --git a/clang/test/CXXMG/type-expressions/type-expr-alias-parse-once-positive.cpp b/clang/test/CXXMG/type-expressions/type-expr-alias-parse-once-positive.cpp
+new file mode 100644
+index 000000000000..cccd555ee571
+--- /dev/null
++++ b/clang/test/CXXMG/type-expressions/type-expr-alias-parse-once-positive.cpp
+@@ -0,0 +1,15 @@
++// RUN: %clang_cc1 -std=c++14 -Wno-non-c-typedef-for-linkage -fsyntax-only -verify %s
++
++// expected-no-diagnostics
++
++struct A {
++  int val = 0;
++};
++
++struct B {
++  int poop = 1;
++};
++
++using C = A + B;
++
++static_assert(sizeof(C) == 8, "");
+diff --git a/clang/test/CXXMG/type-expressions/type-expr-do-not-hijack-alias-template-args.cpp b/clang/test/CXXMG/type-expressions/type-expr-do-not-hijack-alias-template-args.cpp
+new file mode 100644
+index 000000000000..99f1d97bc0af
+--- /dev/null
++++ b/clang/test/CXXMG/type-expressions/type-expr-do-not-hijack-alias-template-args.cpp
+@@ -0,0 +1,25 @@
++// RUN: %clang_cc1 -std=c++14 -fsyntax-only -verify %s
++
++// expected-no-diagnostics
++
++template <class, class>
++constexpr bool is_same_v = false;
++
++template <bool>
++struct Select {
++  template <class T, class>
++  using Apply = T;
++};
++
++template <>
++struct Select<false> {
++  template <class, class U>
++  using Apply = U;
++};
++
++template <class T>
++using X =
++    typename Select<is_same_v<T, long> ||
++                    is_same_v<T, unsigned long>>::template Apply<long, int>;
++
++using R = X<int>;
+-- 
+2.52.0.windows.1
+
