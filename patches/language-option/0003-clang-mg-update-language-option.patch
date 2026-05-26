@@ -1,0 +1,25 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Mike <michaelgorney4@gmail.com>
+Date: Mon, 25 May 2026 22:36:41 -0400
+Subject: [PATCH] clang-mg: update language-option
+
+---
+ clang/lib/Basic/LangStandards.cpp | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/clang/lib/Basic/LangStandards.cpp b/clang/lib/Basic/LangStandards.cpp
+index 01c524b7220f..9005b30c838b 100644
+--- a/clang/lib/Basic/LangStandards.cpp
++++ b/clang/lib/Basic/LangStandards.cpp
+@@ -114,7 +114,7 @@ LangStandard::Kind clang::getDefaultLanguageStandard(clang::Language Lang,
+   case Language::ObjCXX:
+   case Language::CUDA:
+   case Language::HIP:
+-    return LangStandard::lang_gnucxx17;
++    return LangStandard::lang_gnucxx26;
+   case Language::HLSL:
+     return LangStandard::lang_hlsl202x;
+   }
+-- 
+2.52.0.windows.1
+

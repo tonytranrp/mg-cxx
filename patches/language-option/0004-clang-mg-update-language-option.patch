@@ -1,0 +1,42 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Mike <michaelgorney4@gmail.com>
+Date: Mon, 25 May 2026 23:08:24 -0400
+Subject: [PATCH] clang-mg: update language-option
+
+---
+ clang/lib/Basic/LangStandards.cpp     | 2 +-
+ clang/lib/Driver/ToolChains/Clang.cpp | 5 +----
+ 2 files changed, 2 insertions(+), 5 deletions(-)
+
+diff --git a/clang/lib/Basic/LangStandards.cpp b/clang/lib/Basic/LangStandards.cpp
+index 9005b30c838b..01c524b7220f 100644
+--- a/clang/lib/Basic/LangStandards.cpp
++++ b/clang/lib/Basic/LangStandards.cpp
+@@ -114,7 +114,7 @@ LangStandard::Kind clang::getDefaultLanguageStandard(clang::Language Lang,
+   case Language::ObjCXX:
+   case Language::CUDA:
+   case Language::HIP:
+-    return LangStandard::lang_gnucxx26;
++    return LangStandard::lang_gnucxx17;
+   case Language::HLSL:
+     return LangStandard::lang_hlsl202x;
+   }
+diff --git a/clang/lib/Driver/ToolChains/Clang.cpp b/clang/lib/Driver/ToolChains/Clang.cpp
+index 4eb576588b56..73e686751a00 100644
+--- a/clang/lib/Driver/ToolChains/Clang.cpp
++++ b/clang/lib/Driver/ToolChains/Clang.cpp
+@@ -7554,10 +7554,7 @@ void Clang::ConstructJob(Compilation &C, const JobAction &JA,
+       if (IsSYCL)
+         // For SYCL, C++17 is the default.
+         LanguageStandard = "-std=c++17";
+-      else if (IsMSVC2015Compatible)
+-        LanguageStandard = "-std=c++14";
+-      else
+-        LanguageStandard = "-std=c++11";
++      LanguageStandard = "-std=c++26";
+     }
+ 
+     CmdArgs.push_back(LanguageStandard.data());
+-- 
+2.52.0.windows.1
+

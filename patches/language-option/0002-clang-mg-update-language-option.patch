@@ -1,0 +1,25 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Mike <michaelgorney4@gmail.com>
+Date: Mon, 25 May 2026 22:19:57 -0400
+Subject: [PATCH] clang-mg: update language-option
+
+---
+ clang/include/clang/Basic/LangOptions.def | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/clang/include/clang/Basic/LangOptions.def b/clang/include/clang/Basic/LangOptions.def
+index 0e26ff393017..ed1935e8656b 100644
+--- a/clang/include/clang/Basic/LangOptions.def
++++ b/clang/include/clang/Basic/LangOptions.def
+@@ -56,7 +56,7 @@ LANGOPT(CPlusPlus14       , 1, 0, NotCompatible, "C++14")
+ LANGOPT(CPlusPlus17       , 1, 0, NotCompatible, "C++17")
+ LANGOPT(CPlusPlus20       , 1, 0, NotCompatible, "C++20")
+ LANGOPT(CPlusPlus23       , 1, 0, NotCompatible, "C++23")
+-LANGOPT(CPlusPlus26       , 1, 0, NotCompatible, "C++26")
++LANGOPT(CPlusPlus26       , 1, 1, NotCompatible, "C++26")
+ LANGOPT(CPlusPlusMG       , 1, 1, NotCompatible, "C++MG")
+ LANGOPT(ObjC              , 1, 0, NotCompatible, "Objective-C")
+ LANGOPT(ObjCDefaultSynthProperties , 1, 0, Benign,
+-- 
+2.52.0.windows.1
+
