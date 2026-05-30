@@ -1,12 +1,8 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: Mike <michaelgorney4@gmail.com>
 Date: Mon, 25 May 2026 23:08:24 -0400
-Subject: [PATCH] clang-mg: update language-option
+Subject: [PATCH 4/5] clang-mg: update language-option
 
----
- clang/lib/Basic/LangStandards.cpp     | 2 +-
- clang/lib/Driver/ToolChains/Clang.cpp | 5 +----
- 2 files changed, 2 insertions(+), 5 deletions(-)
 
 diff --git a/clang/lib/Basic/LangStandards.cpp b/clang/lib/Basic/LangStandards.cpp
 index 9005b30c838b..01c524b7220f 100644
@@ -22,10 +18,10 @@ index 9005b30c838b..01c524b7220f 100644
      return LangStandard::lang_hlsl202x;
    }
 diff --git a/clang/lib/Driver/ToolChains/Clang.cpp b/clang/lib/Driver/ToolChains/Clang.cpp
-index 8d8e00bbaf7d..603bd0f32730 100644
+index 7657afb14f07..29bfd87b4b2e 100644
 --- a/clang/lib/Driver/ToolChains/Clang.cpp
 +++ b/clang/lib/Driver/ToolChains/Clang.cpp
-@@ -7544,10 +7544,7 @@ void Clang::ConstructJob(Compilation &C, const JobAction &JA,
+@@ -7567,10 +7567,7 @@ void Clang::ConstructJob(Compilation &C, const JobAction &JA,
        if (IsSYCL)
          // For SYCL, C++17 is the default.
          LanguageStandard = "-std=c++17";

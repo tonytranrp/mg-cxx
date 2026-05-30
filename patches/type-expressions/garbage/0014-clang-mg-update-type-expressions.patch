@@ -1,0 +1,347 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Mike <michaelgorney4@gmail.com>
+Date: Sat, 30 May 2026 11:34:14 -0400
+Subject: [PATCH] clang-mg: update type-expressions
+
+---
+ clang/lib/Parse/ParseCXXMGTypeExpr.cpp        | 102 ++++++++++++------
+ ...ate-do-not-steal-qualified-expressions.cpp |  59 ++++++++++
+ ...edicate-do-not-steal-value-expressions.cpp |  47 ++------
+ .../type-predicate-qualified-operands.cpp     |  59 ++++++++++
+ 4 files changed, 201 insertions(+), 66 deletions(-)
+ create mode 100644 clang/test/CXXMG/type-expressions/type-predicate-do-not-steal-qualified-expressions.cpp
+ create mode 100644 clang/test/CXXMG/type-expressions/type-predicate-qualified-operands.cpp
+
+diff --git a/clang/lib/Parse/ParseCXXMGTypeExpr.cpp b/clang/lib/Parse/ParseCXXMGTypeExpr.cpp
+index f9814fddc6a0..9381331ed8ab 100644
+--- a/clang/lib/Parse/ParseCXXMGTypeExpr.cpp
++++ b/clang/lib/Parse/ParseCXXMGTypeExpr.cpp
+@@ -22,34 +22,63 @@ static bool isCXXMGTypeExprPrimaryFollowOperator(tok::TokenKind K) {
+          K == tok::pipepipe;
+ }
+ 
++static bool looksLikeQualifiedCXXMGTypeExprOperand(Parser &P) {
++  unsigned I = 0;
++
++  tok::TokenKind K = P.getCurToken().getKind();
++
++  if (K == tok::coloncolon) {
++    ++I;
++
++    if (P.GetLookAheadToken(I).isNot(tok::identifier))
++      return false;
++
++    ++I;
++  } else if (K == tok::identifier) {
++    ++I;
++  } else {
++    return false;
++  }
++
++  bool SawColonColon = false;
++
++  while (P.GetLookAheadToken(I).is(tok::coloncolon)) {
++    SawColonColon = true;
++    ++I;
++
++    if (P.GetLookAheadToken(I).isNot(tok::identifier))
++      return false;
++
++    ++I;
++  }
++
++  if (!SawColonColon)
++    return false;
++
++  return isCXXMGTypeExprPrimaryFollowOperator(
++      P.GetLookAheadToken(I).getKind());
++}
++
+ static bool mayStartCXXMGTypePredicate(Parser &P) {
+   tok::TokenKind K = P.getCurToken().getKind();
+   if (K == tok::annot_typename)
+     return isCXXMGTypeExprPrimaryFollowOperator(P.NextToken().getKind());
+ 
+-  if (K == tok::kw_typename || K == tok::kw_decltype ||
+-      K == tok::kw_struct || K == tok::kw_class || K == tok::kw_trait)
+-    return true;
+-
+-  if (K == tok::coloncolon)
+-    return true;
+-
+   if (K == tok::identifier) {
+     tok::TokenKind Next = P.NextToken().getKind();
+-    return Next == tok::plus || Next == tok::minus ||
+-           Next == tok::ampamp || Next == tok::pipepipe ||
+-           Next == tok::coloncolon;
+-  }
+ 
+-  if (K == tok::l_paren) {
+-    tok::TokenKind First = P.GetLookAheadToken(1).getKind();
+-    tok::TokenKind Second = P.GetLookAheadToken(2).getKind();
+-    return First == tok::identifier &&
+-           (Second == tok::plus || Second == tok::minus ||
+-            Second == tok::ampamp || Second == tok::pipepipe ||
+-            Second == tok::coloncolon);
++    if (isCXXMGTypeExprPrimaryFollowOperator(Next))
++      return true;
++
++    if (Next == tok::coloncolon)
++      return looksLikeQualifiedCXXMGTypeExprOperand(P);
++
++    return false;
+   }
+ 
++  if (K == tok::coloncolon)
++    return looksLikeQualifiedCXXMGTypeExprOperand(P);
++
+   return false;
+ }
+ 
+@@ -64,19 +93,32 @@ bool Parser::isCXXMGTypeExprOperator(tok::TokenKind K,
+ 
+ bool Parser::ParseCXXMGTypeExprPrimary(ParsedCXXMGTypeExpr &Out,
+                                        bool AllowTypeNameFallback) {
+-  // Qualified type/trait operand path.
+-  //
+-  // Handles:
+-  //   backend::generator && backend_t
+-  //   ::mgmake::backend::generator && backend_t
+-  //
+-  // This must use annotation, not ParseTypeName fallback. If the qualified-id
+-  // is not actually a type/trait, this path fails and the outer tentative parse
+-  // reverts back to normal C++ expression parsing.
+-  if ((Tok.is(tok::identifier) && NextToken().is(tok::coloncolon)) ||
+-      Tok.is(tok::coloncolon)) {
+-    if (TryAnnotateTypeOrScopeToken())
++  if (looksLikeQualifiedCXXMGTypeExprOperand(*this)) {
++    SourceLocation Begin = Tok.getLocation();
++    SourceRange Range;
++
++    TypeResult TR = ParseTypeName(&Range);
++    if (TR.isInvalid() || !TR.get())
+       return false;
++
++    TypeSourceInfo *TSI = nullptr;
++    QualType QT = Actions.GetTypeFromParser(TR.get(), &TSI);
++    if (QT.isNull())
++      return false;
++
++    if (!TSI) {
++      SourceLocation TLoc =
++          Range.getBegin().isValid() ? Range.getBegin() : Begin;
++      TSI = Actions.getASTContext().getTrivialTypeSourceInfo(QT, TLoc);
++    }
++
++    Out = ParsedCXXMGTypeExpr();
++    Out.K = ParsedCXXMGTypeExpr::Operand;
++    Out.OperandType = TR.get();
++    Out.OperandTSI = TSI;
++    Out.BeginLoc = Range.getBegin().isValid() ? Range.getBegin() : Begin;
++    Out.EndLoc = Range.getEnd().isValid() ? Range.getEnd() : Begin;
++    return true;
+   }
+ 
+   // Unqualified type/trait operand path.
+diff --git a/clang/test/CXXMG/type-expressions/type-predicate-do-not-steal-qualified-expressions.cpp b/clang/test/CXXMG/type-expressions/type-predicate-do-not-steal-qualified-expressions.cpp
+new file mode 100644
+index 000000000000..0874a723e738
+--- /dev/null
++++ b/clang/test/CXXMG/type-expressions/type-predicate-do-not-steal-qualified-expressions.cpp
+@@ -0,0 +1,59 @@
++// RUN: %clang_cc1 -std=c++20 -fcxxmg -fsyntax-only -verify %s
++// expected-no-diagnostics
++
++namespace std {
++  template <class T>
++  T declval();
++
++  template <class It, class T>
++  It find(It, It, const T&);
++
++  template <class T, unsigned N>
++  T *end(T (&)[N]);
++}
++
++template <class...>
++using __void_t = void;
++
++template <class _Tp, class _Up, class = void>
++struct __swappable_test {};
++
++template <class _Tp, class _Up>
++struct __swappable_test<
++    _Tp,
++    _Up,
++    __void_t<decltype(std::declval<_Tp>()),
++             decltype(std::declval<_Up>())>> {};
++
++template <class _Traits>
++struct buffer_holder {
++  char __buffer_[_Traits::__stack_buffer_size];
++};
++
++struct traits {
++  static const int __stack_buffer_size = 16;
++};
++
++buffer_holder<traits> global_buffer;
++
++struct __num_get_base {
++  static const int __num_get_buf_sz = 32;
++};
++
++unsigned global_array[__num_get_base::__num_get_buf_sz];
++
++void use_find(char *__first, char *__last, char value) {
++  char *__ret = std::find(__first, __last, value);
++  (void)__ret;
++}
++
++struct ordering {
++  static const int less = -1;
++  static const int greater = 1;
++};
++
++constexpr int choose(bool b) {
++  return b ? ordering::less : ordering::greater;
++}
++
++static_assert(choose(true) == -1);
+diff --git a/clang/test/CXXMG/type-expressions/type-predicate-do-not-steal-value-expressions.cpp b/clang/test/CXXMG/type-expressions/type-predicate-do-not-steal-value-expressions.cpp
+index b564df296fd4..2d4be5849716 100644
+--- a/clang/test/CXXMG/type-expressions/type-predicate-do-not-steal-value-expressions.cpp
++++ b/clang/test/CXXMG/type-expressions/type-predicate-do-not-steal-value-expressions.cpp
+@@ -1,53 +1,28 @@
+ // RUN: %clang_cc1 -std=c++20 -fcxxmg -fsyntax-only -verify %s
+ // expected-no-diagnostics
+ 
+-// This mimics libc++ patterns from __compare/ordering.h. These are normal C++
+-// value expressions and must not be parsed as C++MG type expressions.
+-
+ template <class A, class B>
+ inline constexpr bool is_same_v = false;
+ 
+-template <class A>
+-inline constexpr bool is_same_v<A, A> = true;
+-
+ template <class _Tp, class... _Args>
+ inline constexpr bool one_of_v = (is_same_v<_Tp, _Args> || ...);
+ 
+-static_assert(one_of_v<int, char, int>);
+-static_assert(!one_of_v<int, char, long>);
+-
+ struct partial_ordering {
+-  static const partial_ordering less;
+-  static const partial_ordering greater;
+-  static const partial_ordering equivalent;
+-
+-  int value;
+-
+-  constexpr explicit partial_ordering(int v) : value(v) {}
++  static partial_ordering less;
++  static partial_ordering greater;
++  static partial_ordering equivalent;
+ };
+ 
+-inline constexpr partial_ordering partial_ordering::less{-1};
+-inline constexpr partial_ordering partial_ordering::greater{1};
+-inline constexpr partial_ordering partial_ordering::equivalent{0};
++partial_ordering partial_ordering::less;
++partial_ordering partial_ordering::greater;
++partial_ordering partial_ordering::equivalent;
++
++constexpr int cmp_int(int __v) {
++  return __v < 0 ? -1 : (__v > 0 ? 1 : 0);
++}
+ 
+-constexpr partial_ordering cmp(int __v) {
++partial_ordering cmp_ordering(int __v) {
+   return __v < 0 ? partial_ordering::greater
+                  : (__v > 0 ? partial_ordering::less
+                              : partial_ordering::equivalent);
+ }
+-
+-static_assert(cmp(-1).value == 1);
+-static_assert(cmp(1).value == -1);
+-static_assert(cmp(0).value == 0);
+-
+-namespace ns {
+-  int value();
+-  bool flag();
+-}
+-
+-void normal_qualified_calls_are_not_stolen() {
+-  bool a = ns::flag();
+-  int b = ns::value();
+-  (void)a;
+-  (void)b;
+-}
+diff --git a/clang/test/CXXMG/type-expressions/type-predicate-qualified-operands.cpp b/clang/test/CXXMG/type-expressions/type-predicate-qualified-operands.cpp
+new file mode 100644
+index 000000000000..f587ab1d9ff1
+--- /dev/null
++++ b/clang/test/CXXMG/type-expressions/type-predicate-qualified-operands.cpp
+@@ -0,0 +1,59 @@
++// RUN: %clang_cc1 -std=c++20 -fcxxmg -fsyntax-only -verify %s
++// expected-no-diagnostics
++
++namespace backend {
++  trait generator {
++    void generate();
++  };
++
++  trait builder {
++    void build();
++  };
++
++  struct graphviz {
++    void generate();
++  };
++
++  struct ninja {
++    void generate();
++    void build();
++  };
++}
++
++template <typename Backend>
++constexpr bool has_generator() {
++  using backend_t = Backend;
++  static constexpr bool is_gen = backend::generator && backend_t;
++  return is_gen;
++}
++
++template <typename Backend>
++constexpr bool has_builder() {
++  using backend_t = Backend;
++  static constexpr bool is_build = backend::builder && backend_t;
++  return is_build;
++}
++
++static_assert(has_generator<backend::graphviz>());
++static_assert(!has_builder<backend::graphviz>());
++
++static_assert(has_generator<backend::ninja>());
++static_assert(has_builder<backend::ninja>());
++
++namespace mgmake::backend {
++  trait generator {
++    void generate();
++  };
++
++  struct graphviz {
++    void generate();
++  };
++}
++
++template <typename Backend>
++constexpr bool global_qualified_check() {
++  using backend_t = Backend;
++  return ::mgmake::backend::generator && backend_t;
++}
++
++static_assert(global_qualified_check<mgmake::backend::graphviz>());
+-- 
+2.54.0
+

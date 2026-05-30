@@ -1,14 +1,71 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: Mike <michaelgorney4@gmail.com>
 Date: Sat, 23 May 2026 22:17:00 -0400
-Subject: [PATCH 2/8] clang-mg: update type-expressions
+Subject: [PATCH] clang-mg: update type-expressions
 
+---
+ clang/include/clang/AST/ASTContext.h          |   2 +
+ clang/include/clang/AST/CXXMGTypeExpr.h       | 113 ++++++++++++++
+ clang/include/clang/AST/ExprCXXMG.h           |  68 ++++++++
+ clang/include/clang/AST/PropertiesBase.td     |   1 +
+ clang/include/clang/AST/RecursiveASTVisitor.h |  22 +++
+ clang/include/clang/AST/TextNodeDumper.h      |   3 +
+ clang/include/clang/AST/TypeBase.h            |  25 +++
+ clang/include/clang/AST/TypeLoc.h             |  11 ++
+ clang/include/clang/AST/TypeProperties.td     |   9 ++
+ clang/include/clang/Basic/StmtNodes.td        |   1 +
+ clang/include/clang/Basic/TypeNodes.td        |   1 +
+ clang/include/clang/Sema/Sema.h               |   8 +
+ .../include/clang/Serialization/ASTBitCodes.h |   1 +
+ .../clang/Serialization/ASTRecordReader.h     |   2 +
+ .../clang/Serialization/ASTRecordWriter.h     |   6 +
+ .../clang/Serialization/TypeBitCodes.def      |   1 +
+ clang/lib/AST/ASTContext.cpp                  |  21 +++
+ clang/lib/AST/CMakeLists.txt                  |   1 +
+ clang/lib/AST/CXXMGTypeExpr.cpp               |  84 ++++++++++
+ clang/lib/AST/Expr.cpp                        |  21 +++
+ clang/lib/AST/StmtPrinter.cpp                 |  21 +++
+ clang/lib/AST/StmtProfile.cpp                 |  19 +++
+ clang/lib/AST/TextNodeDumper.cpp              |  14 ++
+ clang/lib/AST/Type.cpp                        |   8 +
+ clang/lib/AST/TypePrinter.cpp                 |  26 ++++
+ clang/lib/Sema/SemaCXXMGTypeExpr.cpp          | 146 ++++++++++++++----
+ .../lib/Sema/SemaTemplateInstantiateDecl.cpp  |   4 +
+ clang/lib/Sema/TreeTransform.h                |  69 +++++++++
+ clang/lib/Serialization/ASTReader.cpp         |  19 +++
+ clang/lib/Serialization/ASTReaderStmt.cpp     |  10 ++
+ clang/lib/Serialization/ASTWriter.cpp         |  19 +++
+ clang/lib/Serialization/ASTWriterStmt.cpp     |   7 +
+ .../type-expr-ast-dump-dependent-alias.cpp    |  11 ++
+ ...type-expr-ast-dump-dependent-predicate.cpp |  11 ++
+ .../type-expr-dependent-alias-subtract.cpp    |  22 +++
+ .../type-expr-dependent-alias.cpp             |  18 +++
+ .../type-expr-dependent-predicate-any.cpp     |  21 +++
+ .../type-expr-dependent-predicate-invalid.cpp |  11 ++
+ .../type-expr-dependent-predicate.cpp         |  20 +++
+ .../type-expr-dependent-trait-composition.cpp |  22 +++
+ .../type-expr-pch-dependent-alias.cpp         |  24 +++
+ .../type-expr-pch-dependent-predicate.cpp     |  21 +++
+ 42 files changed, 915 insertions(+), 29 deletions(-)
+ create mode 100644 clang/include/clang/AST/CXXMGTypeExpr.h
+ create mode 100644 clang/include/clang/AST/ExprCXXMG.h
+ create mode 100644 clang/lib/AST/CXXMGTypeExpr.cpp
+ create mode 100644 clang/test/CXXMG/type-expressions/type-expr-ast-dump-dependent-alias.cpp
+ create mode 100644 clang/test/CXXMG/type-expressions/type-expr-ast-dump-dependent-predicate.cpp
+ create mode 100644 clang/test/CXXMG/type-expressions/type-expr-dependent-alias-subtract.cpp
+ create mode 100644 clang/test/CXXMG/type-expressions/type-expr-dependent-alias.cpp
+ create mode 100644 clang/test/CXXMG/type-expressions/type-expr-dependent-predicate-any.cpp
+ create mode 100644 clang/test/CXXMG/type-expressions/type-expr-dependent-predicate-invalid.cpp
+ create mode 100644 clang/test/CXXMG/type-expressions/type-expr-dependent-predicate.cpp
+ create mode 100644 clang/test/CXXMG/type-expressions/type-expr-dependent-trait-composition.cpp
+ create mode 100644 clang/test/CXXMG/type-expressions/type-expr-pch-dependent-alias.cpp
+ create mode 100644 clang/test/CXXMG/type-expressions/type-expr-pch-dependent-predicate.cpp
 
 diff --git a/clang/include/clang/AST/ASTContext.h b/clang/include/clang/AST/ASTContext.h
-index 9ef27cc1eb58..336677348495 100644
+index c952b8d46974..857c3ed4f394 100644
 --- a/clang/include/clang/AST/ASTContext.h
 +++ b/clang/include/clang/AST/ASTContext.h
-@@ -263,6 +263,7 @@ class ASTContext : public RefCountedBase<ASTContext> {
+@@ -264,6 +264,7 @@ class ASTContext : public RefCountedBase<ASTContext> {
  
    mutable llvm::ContextualFoldingSet<PackIndexingType, ASTContext &>
        DependentPackIndexingTypes;
@@ -16,7 +73,7 @@ index 9ef27cc1eb58..336677348495 100644
  
    mutable llvm::FoldingSet<TemplateTypeParmType> TemplateTypeParmTypes;
    mutable llvm::FoldingSet<ObjCTypeParamType> ObjCTypeParamTypes;
-@@ -2096,6 +2097,7 @@ public:
+@@ -2100,6 +2101,7 @@ public:
                                 bool FullySubstituted = false,
                                 ArrayRef<QualType> Expansions = {},
                                 UnsignedOrNone Index = std::nullopt) const;
@@ -428,7 +485,7 @@ index a9965a4a89aa..95a16bc29fa4 100644
  def ObjCObjectType : TypeNode<Type>;
  def ObjCInterfaceType : TypeNode<ObjCObjectType>, AlwaysCanonical;
 diff --git a/clang/include/clang/Sema/Sema.h b/clang/include/clang/Sema/Sema.h
-index ef2a0c39e77e..53e2e9f1c2a6 100644
+index 04687a67b6ed..067c72732828 100644
 --- a/clang/include/clang/Sema/Sema.h
 +++ b/clang/include/clang/Sema/Sema.h
 @@ -26,6 +26,7 @@

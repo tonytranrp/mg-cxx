@@ -1,0 +1,285 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Mike <michaelgorney4@gmail.com>
+Date: Sat, 30 May 2026 14:11:47 -0400
+Subject: [PATCH] clang-mg: update type-expressions
+
+---
+ clang/lib/Sema/SemaCXXMGTypeExpr.cpp          | 46 ++++++++++++++-----
+ ...type-composition-skips-special-members.cpp | 22 +++++++++
+ ...icate-implements-composed-requirements.cpp | 25 ++++++++++
+ ...plements-does-not-copy-special-members.cpp | 39 ++++++++++++++++
+ .../type-predicate-implements-false.cpp       | 13 ++++++
+ ...dicate-implements-user-special-members.cpp | 18 ++++++++
+ 6 files changed, 151 insertions(+), 12 deletions(-)
+ create mode 100644 clang/test/CXXMG/type-expressions/type-composition-skips-special-members.cpp
+ create mode 100644 clang/test/CXXMG/type-expressions/type-predicate-implements-composed-requirements.cpp
+ create mode 100644 clang/test/CXXMG/type-expressions/type-predicate-implements-does-not-copy-special-members.cpp
+ create mode 100644 clang/test/CXXMG/type-expressions/type-predicate-implements-false.cpp
+ create mode 100644 clang/test/CXXMG/type-expressions/type-predicate-implements-user-special-members.cpp
+
+diff --git a/clang/lib/Sema/SemaCXXMGTypeExpr.cpp b/clang/lib/Sema/SemaCXXMGTypeExpr.cpp
+index 0dae8aca12e4..d5492a934d10 100644
+--- a/clang/lib/Sema/SemaCXXMGTypeExpr.cpp
++++ b/clang/lib/Sema/SemaCXXMGTypeExpr.cpp
+@@ -33,6 +33,12 @@ enum class CXXMGMemberKind {
+   StaticFunctionAnyReturn
+ };
+ 
++enum class CXXMGMemberCollectionMode {
++  SynthesizeType,
++  PredicateCandidate,
++  PredicateRequirement,
++};
++
+ struct CXXMGMemberDescriptor {
+   CXXMGMemberKind Kind;
+   DeclarationName Name;
+@@ -236,7 +242,7 @@ public:
+   }
+ 
+   bool collect(CXXRecordDecl *RD, SmallVectorImpl<CXXMGMemberDescriptor> &Out,
+-               SourceLocation OpLoc) {
++               SourceLocation OpLoc, CXXMGMemberCollectionMode Mode) {
+     bool Invalid = false;
+     for (Decl *D : RD->decls()) {
+       if (auto *FD = dyn_cast<FieldDecl>(D)) {
+@@ -307,8 +313,16 @@ public:
+       if (auto *MD = dyn_cast<CXXMethodDecl>(D)) {
+         if (isa<CXXConstructorDecl>(MD) || isa<CXXDestructorDecl>(MD) ||
+             isa<CXXConversionDecl>(MD) ||
+-            MD->getDeclName().getNameKind() == DeclarationName::CXXOperatorName ||
+-            MD->isTemplated()) {
++            MD->getDeclName().getNameKind() ==
++                DeclarationName::CXXOperatorName) {
++          continue;
++        }
++
++        if (MD->isTemplated()) {
++          if (Mode == CXXMGMemberCollectionMode::PredicateCandidate ||
++              Mode == CXXMGMemberCollectionMode::PredicateRequirement)
++            continue;
++
+           S.Diag(MD->getLocation(),
+                  diag::err_cxxmg_type_expr_unsupported_member)
+               << MD;
+@@ -333,7 +347,8 @@ public:
+     return !Invalid;
+   }
+ 
+-  CXXMGMemberSet buildSet(const CXXMGTypeExprNode *TE) {
++  CXXMGMemberSet buildSet(const CXXMGTypeExprNode *TE,
++                          CXXMGMemberCollectionMode Mode) {
+     if (TE->isOperand()) {
+       CXXMGMemberSet Set;
+       CXXRecordDecl *RD =
+@@ -344,12 +359,12 @@ public:
+         return Set;
+       }
+       Set.IsTrait = RD->isTrait();
+-      Set.Invalid = !collect(RD, Set.Members, TE->getBeginLoc());
++      Set.Invalid = !collect(RD, Set.Members, TE->getBeginLoc(), Mode);
+       return Set;
+     }
+ 
+-    CXXMGMemberSet L = buildSet(TE->getLHS());
+-    CXXMGMemberSet R = buildSet(TE->getRHS());
++    CXXMGMemberSet L = buildSet(TE->getLHS(), Mode);
++    CXXMGMemberSet R = buildSet(TE->getRHS(), Mode);
+     if (L.Invalid || R.Invalid) {
+       L.Invalid = true;
+       return L;
+@@ -635,8 +650,12 @@ public:
+       return false;
+     }
+ 
+-    CXXMGMemberSet Cand = buildSet(TE->getLHS());
+-    CXXMGMemberSet Req = buildSet(TE->getRHS());
++    CXXMGMemberSet Cand =
++        buildSet(TE->getLHS(),
++                 CXXMGMemberCollectionMode::PredicateCandidate);
++    CXXMGMemberSet Req =
++        buildSet(TE->getRHS(),
++                 CXXMGMemberCollectionMode::PredicateRequirement);
+     if (Req.Invalid || Cand.Invalid)
+       return false;
+ 
+@@ -677,7 +696,8 @@ QualType Sema::BuildCXXMGTypeExpressionType(Scope *S, CXXMGTypeExprNode *TE,
+     return Context.getCXXMGTypeExprType(TE);
+ 
+   CXXMGTypeExprSema Impl(*this);
+-  CXXMGMemberSet Set = Impl.buildSet(TE);
++  CXXMGMemberSet Set =
++      Impl.buildSet(TE, CXXMGMemberCollectionMode::SynthesizeType);
+   if (Set.Invalid)
+     return QualType();
+ 
+@@ -755,7 +775,8 @@ Decl *Sema::ActOnCXXMGTypeExpressionRecordDeclaration(
+   if (DiagnoseCXXMGGeneratedRecordNameCollision(*this, CurScope, II, NameLoc))
+     return nullptr;
+ 
+-  CXXMGMemberSet Set = Impl.buildSet(Node);
++  CXXMGMemberSet Set =
++      Impl.buildSet(Node, CXXMGMemberCollectionMode::SynthesizeType);
+   if (Set.Invalid)
+     return nullptr;
+ 
+@@ -797,7 +818,8 @@ bool Sema::InstantiateCXXMGTypeExpressionClassTemplateSpecialization(
+   ClassTemplateSpec->setPointOfInstantiation(PointOfInstantiation);
+ 
+   CXXMGTypeExprSema Impl(*this);
+-  CXXMGMemberSet Set = Impl.buildSet(SubstNode);
++  CXXMGMemberSet Set =
++      Impl.buildSet(SubstNode, CXXMGMemberCollectionMode::SynthesizeType);
+   if (Set.Invalid)
+     return true;
+ 
+diff --git a/clang/test/CXXMG/type-expressions/type-composition-skips-special-members.cpp b/clang/test/CXXMG/type-expressions/type-composition-skips-special-members.cpp
+new file mode 100644
+index 000000000000..19c72f591262
+--- /dev/null
++++ b/clang/test/CXXMG/type-expressions/type-composition-skips-special-members.cpp
+@@ -0,0 +1,22 @@
++// RUN: clang-mg++ -std=c++20 -fsyntax-only -Xclang -verify %s
++// expected-no-diagnostics
++
++struct A {
++  A();
++  A(const A&);
++  A& operator=(const A&);
++  ~A();
++
++  int x;
++};
++
++struct B {
++  int y;
++};
++
++using C = A + B;
++
++void use(C c) {
++  (void)c.x;
++  (void)c.y;
++}
+diff --git a/clang/test/CXXMG/type-expressions/type-predicate-implements-composed-requirements.cpp b/clang/test/CXXMG/type-expressions/type-predicate-implements-composed-requirements.cpp
+new file mode 100644
+index 000000000000..e100e49ee63c
+--- /dev/null
++++ b/clang/test/CXXMG/type-expressions/type-predicate-implements-composed-requirements.cpp
+@@ -0,0 +1,25 @@
++// RUN: clang-mg++ -std=c++20 -fsyntax-only -Xclang -verify %s
++// expected-no-diagnostics
++
++trait HasGenerate {
++  void generate();
++};
++
++trait HasBuild {
++  void build();
++};
++
++struct Ninja {
++  void generate();
++  void build();
++};
++
++struct Graphviz {
++  void generate();
++};
++
++static_assert(Ninja implements (HasGenerate + HasBuild));
++static_assert(Ninja <> (HasGenerate + HasBuild));
++
++static_assert((Graphviz implements (HasGenerate + HasBuild)) == false);
++static_assert((Graphviz <> (HasGenerate + HasBuild)) == false);
+diff --git a/clang/test/CXXMG/type-expressions/type-predicate-implements-does-not-copy-special-members.cpp b/clang/test/CXXMG/type-expressions/type-predicate-implements-does-not-copy-special-members.cpp
+new file mode 100644
+index 000000000000..0338f4c2384c
+--- /dev/null
++++ b/clang/test/CXXMG/type-expressions/type-predicate-implements-does-not-copy-special-members.cpp
+@@ -0,0 +1,39 @@
++// RUN: clang-mg++ -std=c++20 -Wno-c++23-extensions -fsyntax-only -Xclang -verify %s
++// expected-no-diagnostics
++
++trait Generator {
++  void generate();
++};
++
++trait Builder {
++  void build();
++};
++
++struct Graphviz {
++  void generate();
++};
++
++struct Ninja {
++  void generate();
++  void build();
++};
++
++template <typename Backend>
++constexpr bool has_generator() {
++  using backend_t = Backend;
++  static constexpr bool result = backend_t <> Generator;
++  return result;
++}
++
++template <typename Backend>
++constexpr bool has_builder() {
++  using backend_t = Backend;
++  static constexpr bool result = backend_t implements Builder;
++  return result;
++}
++
++static_assert(has_generator<Graphviz>());
++static_assert(has_builder<Graphviz>() == false);
++
++static_assert(has_generator<Ninja>());
++static_assert(has_builder<Ninja>());
+diff --git a/clang/test/CXXMG/type-expressions/type-predicate-implements-false.cpp b/clang/test/CXXMG/type-expressions/type-predicate-implements-false.cpp
+new file mode 100644
+index 000000000000..15704e796cf4
+--- /dev/null
++++ b/clang/test/CXXMG/type-expressions/type-predicate-implements-false.cpp
+@@ -0,0 +1,13 @@
++// RUN: clang-mg++ -std=c++20 -fsyntax-only -Xclang -verify %s
++// expected-no-diagnostics
++
++trait HasBuild {
++  void build();
++};
++
++struct OnlyGenerate {
++  void generate();
++};
++
++static_assert((OnlyGenerate implements HasBuild) == false);
++static_assert((OnlyGenerate <> HasBuild) == false);
+diff --git a/clang/test/CXXMG/type-expressions/type-predicate-implements-user-special-members.cpp b/clang/test/CXXMG/type-expressions/type-predicate-implements-user-special-members.cpp
+new file mode 100644
+index 000000000000..7261c43ab1fe
+--- /dev/null
++++ b/clang/test/CXXMG/type-expressions/type-predicate-implements-user-special-members.cpp
+@@ -0,0 +1,18 @@
++// RUN: clang-mg++ -std=c++20 -fsyntax-only -Xclang -verify %s
++// expected-no-diagnostics
++
++trait HasRun {
++  void run();
++};
++
++struct Weird {
++  Weird();
++  Weird(const Weird&);
++  Weird& operator=(const Weird&);
++  ~Weird();
++
++  void run();
++};
++
++static_assert(Weird implements HasRun);
++static_assert(Weird <> HasRun);
+-- 
+2.54.0
+

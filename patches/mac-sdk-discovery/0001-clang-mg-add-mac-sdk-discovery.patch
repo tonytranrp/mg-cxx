@@ -5,10 +5,10 @@ Subject: [PATCH] clang-mg: add mac-sdk-discovery
 
 
 diff --git a/clang/lib/Driver/ToolChains/Darwin.cpp b/clang/lib/Driver/ToolChains/Darwin.cpp
-index 8552832a1f60..8cf0627a3515 100644
+index 103bc4ec7613..9e5bea8520cf 100644
 --- a/clang/lib/Driver/ToolChains/Darwin.cpp
 +++ b/clang/lib/Driver/ToolChains/Darwin.cpp
-@@ -2571,23 +2571,32 @@ void Darwin::AddDeploymentTarget(DerivedArgList &Args) const {
+@@ -2577,23 +2577,32 @@ void Darwin::AddDeploymentTarget(DerivedArgList &Args) const {
    bool TryXcselect = false;
    (void)TryXcselect;
  

@@ -1,0 +1,409 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Mike <michaelgorney4@gmail.com>
+Date: Sat, 30 May 2026 13:08:58 -0400
+Subject: [PATCH] clang-mg: update type-expressions
+
+---
+ clang/include/clang/Basic/DiagnosticIDs.h     |  2 +-
+ clang/lib/Parse/ParseCXXMGTypeExpr.cpp        | 74 +++++++++++++++++--
+ .../type-expr-alias-parse-once-positive.cpp   |  2 +-
+ ...expr-do-not-hijack-alias-template-args.cpp |  2 +-
+ ...not-hijack-function-style-construction.cpp |  2 +-
+ ...r-do-not-rebind-generated-record-alias.cpp |  2 +-
+ ...ype-expr-generated-record-redefinition.cpp |  2 +-
+ ...e-expr-generated-template-redefinition.cpp |  2 +-
+ .../type-expr-named-record-ast-dump.cpp       |  2 +-
+ ...e-expr-named-record-no-linkage-warning.cpp |  2 +-
+ .../type-expr-named-record-tag-lookup.cpp     |  2 +-
+ .../type-expr-normal-alias-still-alias.cpp    |  2 +-
+ ...pe-expr-predicate-no-typename-fallback.cpp |  2 +-
+ ...-expr-template-class-template-ast-dump.cpp |  2 +-
+ .../type-expr-template-class-template-use.cpp |  2 +-
+ .../type-expr-template-no-linkage-warning.cpp |  2 +-
+ ...pr-template-specialization-field-types.cpp |  2 +-
+ .../type-predicate-implements-basic.cpp       |  6 +-
+ .../type-predicate-implements-composition.cpp |  2 +-
+ .../type-predicate-implements-dependent.cpp   |  2 +-
+ ...ments-do-not-steal-empty-template-args.cpp |  2 +-
+ ...nts-do-not-steal-qualified-expressions.cpp |  2 +-
+ ...lements-do-not-steal-value-expressions.cpp |  2 +-
+ .../type-predicate-implements-errors.cpp      |  2 +-
+ .../type-predicate-implements-qualified.cpp   |  2 +-
+ 25 files changed, 93 insertions(+), 33 deletions(-)
+
+diff --git a/clang/include/clang/Basic/DiagnosticIDs.h b/clang/include/clang/Basic/DiagnosticIDs.h
+index e9367132fe1f..d9913fbd1508 100644
+--- a/clang/include/clang/Basic/DiagnosticIDs.h
++++ b/clang/include/clang/Basic/DiagnosticIDs.h
+@@ -43,7 +43,7 @@ enum {
+   DIAG_SIZE_AST = 300,
+   DIAG_SIZE_COMMENT = 100,
+   DIAG_SIZE_CROSSTU = 100,
+-  DIAG_SIZE_SEMA = 5010,
++  DIAG_SIZE_SEMA = 5020,
+   DIAG_SIZE_ANALYSIS = 100,
+   DIAG_SIZE_REFACTORING = 1000,
+   DIAG_SIZE_INSTALLAPI = 100,
+diff --git a/clang/lib/Parse/ParseCXXMGTypeExpr.cpp b/clang/lib/Parse/ParseCXXMGTypeExpr.cpp
+index fbb71606c4d6..e4ed42e2b5f1 100644
+--- a/clang/lib/Parse/ParseCXXMGTypeExpr.cpp
++++ b/clang/lib/Parse/ParseCXXMGTypeExpr.cpp
+@@ -19,13 +19,48 @@ static bool isCXXMGImplementsOperator(Parser &P) {
+   return P.getCurToken().is(tok::kw_implements) || isCXXMGAngleImplements(P);
+ }
+ 
++static bool isCXXMGTypeExprPrimaryFollowOperator(Parser &P) {
++  return P.NextToken().isOneOf(tok::plus, tok::minus, tok::kw_implements) ||
++         (P.NextToken().is(tok::less) &&
++          P.GetLookAheadToken(2).is(tok::greater));
++}
++
++static bool mayStartQualifiedCXXMGImplementsExpression(Parser &P) {
++  unsigned I = 0;
++
++  if (P.GetLookAheadToken(I).is(tok::coloncolon))
++    ++I;
++
++  if (!P.GetLookAheadToken(I).is(tok::identifier))
++    return false;
++
++  ++I;
++
++  while (P.GetLookAheadToken(I).is(tok::coloncolon) &&
++         P.GetLookAheadToken(I + 1).is(tok::identifier)) {
++    I += 2;
++  }
++
++  if (P.GetLookAheadToken(I).isOneOf(tok::plus, tok::minus,
++                                     tok::kw_implements))
++    return true;
++
++  return P.GetLookAheadToken(I).is(tok::less) &&
++         P.GetLookAheadToken(I + 1).is(tok::greater);
++}
++
+ static bool mayStartCXXMGImplementsExpression(Parser &P) {
+   if (!P.getLangOpts().CPlusPlusMG)
+     return false;
+ 
+   tok::TokenKind K = P.getCurToken().getKind();
+-  return K == tok::identifier || K == tok::coloncolon ||
+-         K == tok::annot_typename || K == tok::l_paren;
++  if (K == tok::annot_typename || K == tok::l_paren)
++    return true;
++
++  if (K == tok::identifier || K == tok::coloncolon)
++    return mayStartQualifiedCXXMGImplementsExpression(P);
++
++  return false;
+ }
+ 
+ bool Parser::isCXXMGTypeCompositionOperator(tok::TokenKind K) const {
+@@ -34,8 +69,13 @@ bool Parser::isCXXMGTypeCompositionOperator(tok::TokenKind K) const {
+ 
+ bool Parser::ParseCXXMGTypeExprPrimary(ParsedCXXMGTypeExpr &Out,
+                                        bool AllowTypeNameFallback) {
+-  if (Tok.is(tok::identifier) &&
+-      NextToken().isOneOf(tok::plus, tok::minus)) {
++  if ((Tok.is(tok::identifier) && NextToken().is(tok::coloncolon)) ||
++      Tok.is(tok::coloncolon)) {
++    if (TryAnnotateTypeOrScopeToken())
++      return false;
++  }
++
++  if (Tok.is(tok::identifier) && isCXXMGTypeExprPrimaryFollowOperator(*this)) {
+     if (TryAnnotateTypeOrScopeToken())
+       return false;
+   }
+@@ -65,8 +105,7 @@ bool Parser::ParseCXXMGTypeExprPrimary(ParsedCXXMGTypeExpr &Out,
+     return true;
+   }
+ 
+-  if (Tok.is(tok::identifier) &&
+-      NextToken().isOneOf(tok::plus, tok::minus)) {
++  if (Tok.is(tok::identifier) && isCXXMGTypeExprPrimaryFollowOperator(*this)) {
+     SourceLocation NameLoc = Tok.getLocation();
+     IdentifierInfo *II = Tok.getIdentifierInfo();
+     ParsedType Ty = Actions.getTypeName(*II, NameLoc, getCurScope());
+@@ -203,11 +242,26 @@ ExprResult Parser::TryParseCXXMGImplementsExpression() {
+   if (!mayStartCXXMGImplementsExpression(*this))
+     return ExprEmpty();
+ 
++  if (Tok.is(tok::l_paren)) {
++    TentativeParsingAction TPA(*this);
++    ConsumeParen();
++
++    ExprResult Inner = TryParseCXXMGImplementsExpression();
++    if (!Inner.isUsable() || Tok.isNot(tok::r_paren)) {
++      TPA.Revert();
++      return ExprEmpty();
++    }
++
++    ConsumeParen();
++    TPA.Commit();
++    return Inner;
++  }
++
+   TentativeParsingAction TPA(*this);
+   ParsedCXXMGTypeExpr LHS;
+   if (!TryParseCXXMGTypeExpression(LHS,
+                                    /*RequireTypeProducingResult=*/false,
+-                                   /*AllowTypeNameFallback=*/true)) {
++                                   /*AllowTypeNameFallback=*/false)) {
+     TPA.Revert();
+     return ExprEmpty();
+   }
+@@ -228,6 +282,12 @@ ExprResult Parser::TryParseCXXMGImplementsExpression() {
+     return ExprEmpty();
+   }
+ 
++  if (Tok.isOneOf(tok::semi, tok::comma, tok::r_paren, tok::eof)) {
++    TPA.Commit();
++    Diag(Tok.getLocation(), diag::err_cxxmg_expected_type_after_implements);
++    return ExprError();
++  }
++
+   ParsedCXXMGTypeExpr RHS;
+   if (!TryParseCXXMGTypeExpression(RHS,
+                                    /*RequireTypeProducingResult=*/false,
+diff --git a/clang/test/CXXMG/type-expressions/type-expr-alias-parse-once-positive.cpp b/clang/test/CXXMG/type-expressions/type-expr-alias-parse-once-positive.cpp
+index f31eb6428917..e4e1949e5f65 100644
+--- a/clang/test/CXXMG/type-expressions/type-expr-alias-parse-once-positive.cpp
++++ b/clang/test/CXXMG/type-expressions/type-expr-alias-parse-once-positive.cpp
+@@ -1,4 +1,4 @@
+-// RUN: %clang_cc1 -std=c++14 -fcxxmg -Wno-non-c-typedef-for-linkage -fsyntax-only -verify %s
++// RUN: clang-mg++ -std=c++14 -Wno-non-c-typedef-for-linkage -fsyntax-only -Xclang -verify %s
+ 
+ // expected-no-diagnostics
+ 
+diff --git a/clang/test/CXXMG/type-expressions/type-expr-do-not-hijack-alias-template-args.cpp b/clang/test/CXXMG/type-expressions/type-expr-do-not-hijack-alias-template-args.cpp
+index 8c13c15cb591..7d1aeb41cb83 100644
+--- a/clang/test/CXXMG/type-expressions/type-expr-do-not-hijack-alias-template-args.cpp
++++ b/clang/test/CXXMG/type-expressions/type-expr-do-not-hijack-alias-template-args.cpp
+@@ -1,4 +1,4 @@
+-// RUN: %clang_cc1 -std=c++14 -fcxxmg -fsyntax-only -verify %s
++// RUN: clang-mg++ -std=c++14 -fsyntax-only -Xclang -verify %s
+ 
+ // expected-no-diagnostics
+ 
+diff --git a/clang/test/CXXMG/type-expressions/type-expr-do-not-hijack-function-style-construction.cpp b/clang/test/CXXMG/type-expressions/type-expr-do-not-hijack-function-style-construction.cpp
+index 19cbeec14531..69a843704b5c 100644
+--- a/clang/test/CXXMG/type-expressions/type-expr-do-not-hijack-function-style-construction.cpp
++++ b/clang/test/CXXMG/type-expressions/type-expr-do-not-hijack-function-style-construction.cpp
+@@ -1,4 +1,4 @@
+-// RUN: %clang_cc1 -std=c++14 -fcxxmg -fcxx-exceptions -fexceptions -fsyntax-only -verify %s
++// RUN: clang-mg++ -std=c++14 -fcxx-exceptions -fexceptions -fsyntax-only -Xclang -verify %s
+ 
+ // expected-no-diagnostics
+ 
+diff --git a/clang/test/CXXMG/type-expressions/type-expr-do-not-rebind-generated-record-alias.cpp b/clang/test/CXXMG/type-expressions/type-expr-do-not-rebind-generated-record-alias.cpp
+index 6816448f3576..064a116ffdfb 100644
+--- a/clang/test/CXXMG/type-expressions/type-expr-do-not-rebind-generated-record-alias.cpp
++++ b/clang/test/CXXMG/type-expressions/type-expr-do-not-rebind-generated-record-alias.cpp
+@@ -1,4 +1,4 @@
+-// RUN: %clang_cc1 -std=c++14 -fcxxmg -triple x86_64-pc-windows-msvc -emit-llvm-only -verify %s
++// RUN: clang-mg++ -std=c++14 --target=x86_64-pc-windows-msvc -S -emit-llvm -o /dev/null -Xclang -verify %s
+ 
+ // expected-no-diagnostics
+ 
+diff --git a/clang/test/CXXMG/type-expressions/type-expr-generated-record-redefinition.cpp b/clang/test/CXXMG/type-expressions/type-expr-generated-record-redefinition.cpp
+index c24f805c9ec6..74f8bdcd41ee 100644
+--- a/clang/test/CXXMG/type-expressions/type-expr-generated-record-redefinition.cpp
++++ b/clang/test/CXXMG/type-expressions/type-expr-generated-record-redefinition.cpp
+@@ -1,4 +1,4 @@
+-// RUN: %clang_cc1 -std=c++20 -fcxxmg -fsyntax-only -verify %s
++// RUN: clang-mg++ -std=c++20 -fsyntax-only -Xclang -verify %s
+ 
+ struct A { int a = 0; };
+ struct B { int b = 0; };
+diff --git a/clang/test/CXXMG/type-expressions/type-expr-generated-template-redefinition.cpp b/clang/test/CXXMG/type-expressions/type-expr-generated-template-redefinition.cpp
+index 921557ff1ec2..ad6478ac3929 100644
+--- a/clang/test/CXXMG/type-expressions/type-expr-generated-template-redefinition.cpp
++++ b/clang/test/CXXMG/type-expressions/type-expr-generated-template-redefinition.cpp
+@@ -1,4 +1,4 @@
+-// RUN: %clang_cc1 -std=c++20 -fcxxmg -fsyntax-only -verify %s
++// RUN: clang-mg++ -std=c++20 -fsyntax-only -Xclang -verify %s
+ 
+ struct B { int b = 0; };
+ 
+diff --git a/clang/test/CXXMG/type-expressions/type-expr-named-record-ast-dump.cpp b/clang/test/CXXMG/type-expressions/type-expr-named-record-ast-dump.cpp
+index 246effa57d22..4e14b2d83cec 100644
+--- a/clang/test/CXXMG/type-expressions/type-expr-named-record-ast-dump.cpp
++++ b/clang/test/CXXMG/type-expressions/type-expr-named-record-ast-dump.cpp
+@@ -1,4 +1,4 @@
+-// RUN: %clang_cc1 -std=c++20 -fcxxmg -ast-dump -fsyntax-only %s | FileCheck %s
++// RUN: clang-mg++ -std=c++20 -Xclang -ast-dump -fsyntax-only %s | FileCheck %s
+ 
+ struct A {
+   int count = 69;
+diff --git a/clang/test/CXXMG/type-expressions/type-expr-named-record-no-linkage-warning.cpp b/clang/test/CXXMG/type-expressions/type-expr-named-record-no-linkage-warning.cpp
+index 16238064dbc7..0ed1e3686423 100644
+--- a/clang/test/CXXMG/type-expressions/type-expr-named-record-no-linkage-warning.cpp
++++ b/clang/test/CXXMG/type-expressions/type-expr-named-record-no-linkage-warning.cpp
+@@ -1,4 +1,4 @@
+-// RUN: %clang_cc1 -std=c++20 -fcxxmg -Wnon-c-typedef-for-linkage -fsyntax-only -verify %s
++// RUN: clang-mg++ -std=c++20 -Wnon-c-typedef-for-linkage -fsyntax-only -Xclang -verify %s
+ 
+ // expected-no-diagnostics
+ 
+diff --git a/clang/test/CXXMG/type-expressions/type-expr-named-record-tag-lookup.cpp b/clang/test/CXXMG/type-expressions/type-expr-named-record-tag-lookup.cpp
+index fa6c6719b50b..c35294accd92 100644
+--- a/clang/test/CXXMG/type-expressions/type-expr-named-record-tag-lookup.cpp
++++ b/clang/test/CXXMG/type-expressions/type-expr-named-record-tag-lookup.cpp
+@@ -1,4 +1,4 @@
+-// RUN: %clang_cc1 -std=c++20 -fcxxmg -fsyntax-only -verify %s
++// RUN: clang-mg++ -std=c++20 -fsyntax-only -Xclang -verify %s
+ 
+ // expected-no-diagnostics
+ 
+diff --git a/clang/test/CXXMG/type-expressions/type-expr-normal-alias-still-alias.cpp b/clang/test/CXXMG/type-expressions/type-expr-normal-alias-still-alias.cpp
+index 117f4486a819..bf5070691488 100644
+--- a/clang/test/CXXMG/type-expressions/type-expr-normal-alias-still-alias.cpp
++++ b/clang/test/CXXMG/type-expressions/type-expr-normal-alias-still-alias.cpp
+@@ -1,4 +1,4 @@
+-// RUN: %clang_cc1 -std=c++20 -fcxxmg -fsyntax-only -verify %s
++// RUN: clang-mg++ -std=c++20 -fsyntax-only -Xclang -verify %s
+ 
+ // expected-no-diagnostics
+ 
+diff --git a/clang/test/CXXMG/type-expressions/type-expr-predicate-no-typename-fallback.cpp b/clang/test/CXXMG/type-expressions/type-expr-predicate-no-typename-fallback.cpp
+index 9ff4e3e860c0..4116e86de259 100644
+--- a/clang/test/CXXMG/type-expressions/type-expr-predicate-no-typename-fallback.cpp
++++ b/clang/test/CXXMG/type-expressions/type-expr-predicate-no-typename-fallback.cpp
+@@ -1,4 +1,4 @@
+-// RUN: %clang_cc1 -std=c++14 -fcxxmg -fsyntax-only -verify %s
++// RUN: clang-mg++ -std=c++14 -fsyntax-only -Xclang -verify %s
+ 
+ // expected-no-diagnostics
+ 
+diff --git a/clang/test/CXXMG/type-expressions/type-expr-template-class-template-ast-dump.cpp b/clang/test/CXXMG/type-expressions/type-expr-template-class-template-ast-dump.cpp
+index a2c0fdce2991..96f39a7befeb 100644
+--- a/clang/test/CXXMG/type-expressions/type-expr-template-class-template-ast-dump.cpp
++++ b/clang/test/CXXMG/type-expressions/type-expr-template-class-template-ast-dump.cpp
+@@ -1,4 +1,4 @@
+-// RUN: %clang_cc1 -std=c++20 -fcxxmg -ast-dump -fsyntax-only %s | FileCheck %s
++// RUN: clang-mg++ -std=c++20 -Xclang -ast-dump -fsyntax-only %s | FileCheck %s
+ 
+ struct B {
+   bool cond = true;
+diff --git a/clang/test/CXXMG/type-expressions/type-expr-template-class-template-use.cpp b/clang/test/CXXMG/type-expressions/type-expr-template-class-template-use.cpp
+index 2b8a017e4e96..8da59a8f020e 100644
+--- a/clang/test/CXXMG/type-expressions/type-expr-template-class-template-use.cpp
++++ b/clang/test/CXXMG/type-expressions/type-expr-template-class-template-use.cpp
+@@ -1,4 +1,4 @@
+-// RUN: %clang_cc1 -std=c++20 -fcxxmg -fsyntax-only -verify %s
++// RUN: clang-mg++ -std=c++20 -fsyntax-only -Xclang -verify %s
+ 
+ // expected-no-diagnostics
+ 
+diff --git a/clang/test/CXXMG/type-expressions/type-expr-template-no-linkage-warning.cpp b/clang/test/CXXMG/type-expressions/type-expr-template-no-linkage-warning.cpp
+index 08eba9d982e3..89c852e6b963 100644
+--- a/clang/test/CXXMG/type-expressions/type-expr-template-no-linkage-warning.cpp
++++ b/clang/test/CXXMG/type-expressions/type-expr-template-no-linkage-warning.cpp
+@@ -1,4 +1,4 @@
+-// RUN: %clang_cc1 -std=c++20 -fcxxmg -Wnon-c-typedef-for-linkage -fsyntax-only -verify %s
++// RUN: clang-mg++ -std=c++20 -Wnon-c-typedef-for-linkage -fsyntax-only -Xclang -verify %s
+ 
+ // expected-no-diagnostics
+ 
+diff --git a/clang/test/CXXMG/type-expressions/type-expr-template-specialization-field-types.cpp b/clang/test/CXXMG/type-expressions/type-expr-template-specialization-field-types.cpp
+index 7ecec34a1ead..96807ead3a01 100644
+--- a/clang/test/CXXMG/type-expressions/type-expr-template-specialization-field-types.cpp
++++ b/clang/test/CXXMG/type-expressions/type-expr-template-specialization-field-types.cpp
+@@ -1,4 +1,4 @@
+-// RUN: %clang_cc1 -std=c++20 -fcxxmg -fsyntax-only -verify %s
++// RUN: clang-mg++ -std=c++20 -fsyntax-only -Xclang -verify %s
+ 
+ // expected-no-diagnostics
+ 
+diff --git a/clang/test/CXXMG/type-expressions/type-predicate-implements-basic.cpp b/clang/test/CXXMG/type-expressions/type-predicate-implements-basic.cpp
+index 9dd50912770d..2972497965d6 100644
+--- a/clang/test/CXXMG/type-expressions/type-predicate-implements-basic.cpp
++++ b/clang/test/CXXMG/type-expressions/type-predicate-implements-basic.cpp
+@@ -1,4 +1,4 @@
+-// RUN: %clang_cc1 -std=c++20 -fcxxmg -fsyntax-only -verify %s
++// RUN: clang-mg++ -std=c++20 -fsyntax-only -Xclang -verify %s
+ // expected-no-diagnostics
+ 
+ trait HasValue {
+@@ -14,5 +14,5 @@ struct Empty {};
+ static_assert(S implements HasValue);
+ static_assert(S <> HasValue);
+ 
+-static_assert(!(Empty implements HasValue));
+-static_assert(!(Empty <> HasValue));
++static_assert((Empty implements HasValue) == false);
++static_assert((Empty <> HasValue) == false);
+diff --git a/clang/test/CXXMG/type-expressions/type-predicate-implements-composition.cpp b/clang/test/CXXMG/type-expressions/type-predicate-implements-composition.cpp
+index 88f3c1b52861..09071389a528 100644
+--- a/clang/test/CXXMG/type-expressions/type-predicate-implements-composition.cpp
++++ b/clang/test/CXXMG/type-expressions/type-predicate-implements-composition.cpp
+@@ -1,4 +1,4 @@
+-// RUN: %clang_cc1 -std=c++20 -fcxxmg -fsyntax-only -verify %s
++// RUN: clang-mg++ -std=c++20 -fsyntax-only -Xclang -verify %s
+ // expected-no-diagnostics
+ 
+ trait HasValue {
+diff --git a/clang/test/CXXMG/type-expressions/type-predicate-implements-dependent.cpp b/clang/test/CXXMG/type-expressions/type-predicate-implements-dependent.cpp
+index 087cce7d5f1a..dd0ad1752bff 100644
+--- a/clang/test/CXXMG/type-expressions/type-predicate-implements-dependent.cpp
++++ b/clang/test/CXXMG/type-expressions/type-predicate-implements-dependent.cpp
+@@ -1,4 +1,4 @@
+-// RUN: %clang_cc1 -std=c++20 -fcxxmg -fsyntax-only -verify %s
++// RUN: clang-mg++ -std=c++20 -Wno-c++23-extensions -fsyntax-only -Xclang -verify %s
+ // expected-no-diagnostics
+ 
+ trait HasGenerate {
+diff --git a/clang/test/CXXMG/type-expressions/type-predicate-implements-do-not-steal-empty-template-args.cpp b/clang/test/CXXMG/type-expressions/type-predicate-implements-do-not-steal-empty-template-args.cpp
+index 3f767c17e27b..2cb60a458a04 100644
+--- a/clang/test/CXXMG/type-expressions/type-predicate-implements-do-not-steal-empty-template-args.cpp
++++ b/clang/test/CXXMG/type-expressions/type-predicate-implements-do-not-steal-empty-template-args.cpp
+@@ -1,4 +1,4 @@
+-// RUN: %clang_cc1 -std=c++20 -fcxxmg -fsyntax-only -verify %s
++// RUN: clang-mg++ -std=c++20 -fsyntax-only -Xclang -verify %s
+ // expected-no-diagnostics
+ 
+ template <class T = int>
+diff --git a/clang/test/CXXMG/type-expressions/type-predicate-implements-do-not-steal-qualified-expressions.cpp b/clang/test/CXXMG/type-expressions/type-predicate-implements-do-not-steal-qualified-expressions.cpp
+index 073329307701..da2c9630f795 100644
+--- a/clang/test/CXXMG/type-expressions/type-predicate-implements-do-not-steal-qualified-expressions.cpp
++++ b/clang/test/CXXMG/type-expressions/type-predicate-implements-do-not-steal-qualified-expressions.cpp
+@@ -1,4 +1,4 @@
+-// RUN: %clang_cc1 -std=c++20 -fcxxmg -fsyntax-only -verify %s
++// RUN: clang-mg++ -std=c++20 -fsyntax-only -Xclang -verify %s
+ // expected-no-diagnostics
+ 
+ namespace std {
+diff --git a/clang/test/CXXMG/type-expressions/type-predicate-implements-do-not-steal-value-expressions.cpp b/clang/test/CXXMG/type-expressions/type-predicate-implements-do-not-steal-value-expressions.cpp
+index e97732a41ff8..a8aa8eb295bd 100644
+--- a/clang/test/CXXMG/type-expressions/type-predicate-implements-do-not-steal-value-expressions.cpp
++++ b/clang/test/CXXMG/type-expressions/type-predicate-implements-do-not-steal-value-expressions.cpp
+@@ -1,4 +1,4 @@
+-// RUN: %clang_cc1 -std=c++20 -fcxxmg -fsyntax-only -verify %s
++// RUN: clang-mg++ -std=c++20 -fsyntax-only -Xclang -verify %s
+ // expected-no-diagnostics
+ 
+ template <class A, class B>
+diff --git a/clang/test/CXXMG/type-expressions/type-predicate-implements-errors.cpp b/clang/test/CXXMG/type-expressions/type-predicate-implements-errors.cpp
+index 88865308042d..44760138b0fc 100644
+--- a/clang/test/CXXMG/type-expressions/type-predicate-implements-errors.cpp
++++ b/clang/test/CXXMG/type-expressions/type-predicate-implements-errors.cpp
+@@ -1,4 +1,4 @@
+-// RUN: %clang_cc1 -std=c++20 -fcxxmg -fsyntax-only -verify %s
++// RUN: clang-mg++ -std=c++20 -fsyntax-only -Xclang -verify %s
+ 
+ trait HasValue {
+   int value;
+diff --git a/clang/test/CXXMG/type-expressions/type-predicate-implements-qualified.cpp b/clang/test/CXXMG/type-expressions/type-predicate-implements-qualified.cpp
+index ba54733d1ef2..d6722915f996 100644
+--- a/clang/test/CXXMG/type-expressions/type-predicate-implements-qualified.cpp
++++ b/clang/test/CXXMG/type-expressions/type-predicate-implements-qualified.cpp
+@@ -1,4 +1,4 @@
+-// RUN: %clang_cc1 -std=c++20 -fcxxmg -fsyntax-only -verify %s
++// RUN: clang-mg++ -std=c++20 -fsyntax-only -Xclang -verify %s
+ // expected-no-diagnostics
+ 
+ namespace backend {
+-- 
+2.54.0
+

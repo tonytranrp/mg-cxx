@@ -5,7 +5,7 @@ Subject: [PATCH 09/10] clang-mg: update conditional-members
 
 
 diff --git a/clang/lib/Sema/SemaDeclCXX.cpp b/clang/lib/Sema/SemaDeclCXX.cpp
-index f56ae0e66d20..2a6d67fb5e8f 100644
+index b8bd7d06bbc4..538ff831ab96 100644
 --- a/clang/lib/Sema/SemaDeclCXX.cpp
 +++ b/clang/lib/Sema/SemaDeclCXX.cpp
 @@ -3528,6 +3528,9 @@ Decl *Sema::ActOnCXXMGConditionalMember(

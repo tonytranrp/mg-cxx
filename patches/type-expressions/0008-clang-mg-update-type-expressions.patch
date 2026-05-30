@@ -1,8 +1,39 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: Mike <michaelgorney4@gmail.com>
 Date: Mon, 25 May 2026 20:01:14 -0400
-Subject: [PATCH 8/8] clang-mg: update type-expressions
+Subject: [PATCH] clang-mg: update type-expressions
 
+---
+ clang/include/clang/AST/DeclCXX.h             |  18 ++
+ .../clang/Basic/DiagnosticSemaKinds.td        |   4 +
+ clang/include/clang/Sema/Sema.h               |  13 +
+ clang/lib/AST/TextNodeDumper.cpp              |   4 +
+ clang/lib/Parse/ParseDeclCXX.cpp              |  15 +-
+ clang/lib/Sema/SemaCXXMGTypeExpr.cpp          | 239 ++++++++++++++++--
+ clang/lib/Sema/SemaTemplateInstantiate.cpp    |  16 ++
+ clang/lib/Serialization/ASTReaderDecl.cpp     |   1 +
+ clang/lib/Serialization/ASTWriter.cpp         |   1 +
+ ...ype-expr-generated-record-redefinition.cpp |   7 +
+ ...e-expr-generated-template-redefinition.cpp |  12 +
+ .../type-expr-named-record-ast-dump.cpp       |  16 ++
+ ...e-expr-named-record-no-linkage-warning.cpp |  18 ++
+ .../type-expr-named-record-tag-lookup.cpp     |  20 ++
+ .../type-expr-normal-alias-still-alias.cpp    |  10 +
+ ...-expr-template-class-template-ast-dump.cpp |  23 ++
+ .../type-expr-template-class-template-use.cpp |  21 ++
+ .../type-expr-template-no-linkage-warning.cpp |  17 ++
+ ...pr-template-specialization-field-types.cpp |  19 ++
+ 19 files changed, 455 insertions(+), 19 deletions(-)
+ create mode 100644 clang/test/CXXMG/type-expressions/type-expr-generated-record-redefinition.cpp
+ create mode 100644 clang/test/CXXMG/type-expressions/type-expr-generated-template-redefinition.cpp
+ create mode 100644 clang/test/CXXMG/type-expressions/type-expr-named-record-ast-dump.cpp
+ create mode 100644 clang/test/CXXMG/type-expressions/type-expr-named-record-no-linkage-warning.cpp
+ create mode 100644 clang/test/CXXMG/type-expressions/type-expr-named-record-tag-lookup.cpp
+ create mode 100644 clang/test/CXXMG/type-expressions/type-expr-normal-alias-still-alias.cpp
+ create mode 100644 clang/test/CXXMG/type-expressions/type-expr-template-class-template-ast-dump.cpp
+ create mode 100644 clang/test/CXXMG/type-expressions/type-expr-template-class-template-use.cpp
+ create mode 100644 clang/test/CXXMG/type-expressions/type-expr-template-no-linkage-warning.cpp
+ create mode 100644 clang/test/CXXMG/type-expressions/type-expr-template-specialization-field-types.cpp
 
 diff --git a/clang/include/clang/AST/DeclCXX.h b/clang/include/clang/AST/DeclCXX.h
 index 036886d51ae7..b0736d85c6d7 100644
@@ -48,10 +79,10 @@ index 036886d51ae7..b0736d85c6d7 100644
    /// (C++11 [class.ctor]p5).
    bool hasTrivialDefaultConstructor() const {
 diff --git a/clang/include/clang/Basic/DiagnosticSemaKinds.td b/clang/include/clang/Basic/DiagnosticSemaKinds.td
-index 0c9bd60ffa57..87c4c91ebbc8 100644
+index 2a18a5f666b1..de0f9632adf8 100644
 --- a/clang/include/clang/Basic/DiagnosticSemaKinds.td
 +++ b/clang/include/clang/Basic/DiagnosticSemaKinds.td
-@@ -14274,6 +14274,10 @@ def err_cxxmg_type_expr_invalid_operand :
+@@ -14280,6 +14280,10 @@ def err_cxxmg_type_expr_invalid_operand :
    Error<"type expression operand %0 is not a struct, class, or trait">;
  def err_cxxmg_type_expr_incomplete_operand :
    Error<"type expression operand %0 is incomplete">;
@@ -63,7 +94,7 @@ index 0c9bd60ffa57..87c4c91ebbc8 100644
    Error<"union type %0 cannot be used in a type expression">;
  def err_cxxmg_type_expr_invalid_operator_predicate_sema :
 diff --git a/clang/include/clang/Sema/Sema.h b/clang/include/clang/Sema/Sema.h
-index 53e2e9f1c2a6..503d119a583a 100644
+index 067c72732828..9d99beebf3a0 100644
 --- a/clang/include/clang/Sema/Sema.h
 +++ b/clang/include/clang/Sema/Sema.h
 @@ -5526,10 +5526,23 @@ public:
@@ -450,10 +481,10 @@ index 876cb5dce8a1..9f5c0e899b9f 100644
    if (!TE)
      return ExprError();
 diff --git a/clang/lib/Sema/SemaTemplateInstantiate.cpp b/clang/lib/Sema/SemaTemplateInstantiate.cpp
-index c29eef928fb7..813f2c3e3fdc 100644
+index 0e5aca969a97..745f7e996492 100644
 --- a/clang/lib/Sema/SemaTemplateInstantiate.cpp
 +++ b/clang/lib/Sema/SemaTemplateInstantiate.cpp
-@@ -4154,6 +4154,11 @@ bool Sema::InstantiateClassTemplateSpecialization(
+@@ -4153,6 +4153,11 @@ bool Sema::InstantiateClassTemplateSpecialization(
    if (!Pattern.isUsable())
      return Pattern.isInvalid();
  
@@ -465,7 +496,7 @@ index c29eef928fb7..813f2c3e3fdc 100644
    bool Err = InstantiateClassImpl(
        PointOfInstantiation, ClassTemplateSpec, Pattern.get(),
        getTemplateInstantiationArgs(ClassTemplateSpec), TSK, Complain);
-@@ -4170,6 +4175,17 @@ bool Sema::InstantiateClassTemplateSpecialization(
+@@ -4169,6 +4174,17 @@ bool Sema::InstantiateClassTemplateSpecialization(
    return Err;
  }
  

@@ -1,8 +1,15 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: Mike <michaelgorney4@gmail.com>
 Date: Mon, 25 May 2026 18:42:17 -0400
-Subject: [PATCH 7/8] clang-mg: update type-expressions
+Subject: [PATCH] clang-mg: update type-expressions
 
+---
+ clang/include/clang/AST/ASTImporter.h      |  1 +
+ clang/include/clang/AST/StmtVisitor.h      |  1 +
+ clang/lib/AST/ASTImporter.cpp              | 14 ++++++++++++++
+ clang/lib/AST/ASTStructuralEquivalence.cpp |  7 +++++++
+ clang/lib/AST/Stmt.cpp                     |  1 +
+ 5 files changed, 24 insertions(+)
 
 diff --git a/clang/include/clang/AST/ASTImporter.h b/clang/include/clang/AST/ASTImporter.h
 index 39d1429639ed..82df6223afb5 100644

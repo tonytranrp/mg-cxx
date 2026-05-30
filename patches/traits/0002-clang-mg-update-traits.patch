@@ -17,7 +17,7 @@ index 0ebf56ecffe6..49f4cefccdc1 100644
    SemaExceptionSpec.cpp
    SemaExpr.cpp
 diff --git a/clang/lib/Sema/SemaDeclCXX.cpp b/clang/lib/Sema/SemaDeclCXX.cpp
-index a1eed6e69212..a5ce3b0c444c 100644
+index d818e05924ee..e0427497e05f 100644
 --- a/clang/lib/Sema/SemaDeclCXX.cpp
 +++ b/clang/lib/Sema/SemaDeclCXX.cpp
 @@ -3464,146 +3464,6 @@ static bool IsUnusedPrivateField(const FieldDecl *FD) {

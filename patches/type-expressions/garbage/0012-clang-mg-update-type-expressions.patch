@@ -1,0 +1,47 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Mike <michaelgorney4@gmail.com>
+Date: Sat, 30 May 2026 01:57:17 -0400
+Subject: [PATCH] clang-mg: update type-expressions
+
+---
+ clang/lib/Parse/ParseCXXMGTypeExpr.cpp | 10 +++++-----
+ 1 file changed, 5 insertions(+), 5 deletions(-)
+
+diff --git a/clang/lib/Parse/ParseCXXMGTypeExpr.cpp b/clang/lib/Parse/ParseCXXMGTypeExpr.cpp
+index d8c3fbca3e03..b9d9df8997ac 100644
+--- a/clang/lib/Parse/ParseCXXMGTypeExpr.cpp
++++ b/clang/lib/Parse/ParseCXXMGTypeExpr.cpp
+@@ -32,9 +32,9 @@ static bool mayStartCXXMGTypePredicate(Parser &P) {
+ 
+   if (K == tok::identifier) {
+     tok::TokenKind Next = P.NextToken().getKind();
+-    return Next == tok::plus || Next == tok::minus || Next == tok::ampamp ||
+-           Next == tok::pipepipe || Next == tok::coloncolon ||
+-           Next == tok::less;
++    return Next == tok::plus || Next == tok::minus ||
++       Next == tok::ampamp || Next == tok::pipepipe ||
++       Next == tok::coloncolon;
+   }
+ 
+   if (K == tok::l_paren) {
+@@ -43,7 +43,7 @@ static bool mayStartCXXMGTypePredicate(Parser &P) {
+     return First == tok::identifier &&
+            (Second == tok::plus || Second == tok::minus ||
+             Second == tok::ampamp || Second == tok::pipepipe ||
+-            Second == tok::coloncolon || Second == tok::less);
++            Second == tok::coloncolon);
+   }
+ 
+   return false;
+@@ -248,7 +248,7 @@ ExprResult Parser::TryParseCXXMGTypePredicateExpression() {
+   ParsedCXXMGTypeExpr TE;
+   if (!TryParseCXXMGTypeExpression(TE, /*AllowPredicates=*/true,
+                                    /*RequireTypeProducingResult=*/false,
+-                                   /*AllowTypeNameFallback=*/true) ||
++                                   /*AllowTypeNameFallback=*/false) ||
+       !TE.SawTypeExprOperator) {
+     TPA.Revert();
+     return ExprEmpty();
+-- 
+2.54.0
+

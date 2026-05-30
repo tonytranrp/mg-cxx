@@ -206,7 +206,13 @@ trait ValueTrait {
 Traits can then be used to test whether a type has the required members:
 
 ```cpp
-static constexpr bool hasValue = ValueTrait && S;
+static constexpr bool hasValue = S implements ValueTrait;
+```
+
+or use the implements operator `<>` instead:
+
+```cpp
+static constexpr bool hasValue = S <> ValueTrait;
 ```
 
 The goal is to make simple structural checks readable without requiring a more complicated concepts-based setup.
@@ -264,8 +270,7 @@ trait CombinedTrait {
 You can then check whether a type matches part or all of a trait expression:
 
 ```cpp
-static constexpr bool hasAnyRequiredMember = CombinedTrait || C;
-static constexpr bool hasAllRequiredMembers = CombinedTrait && C;
+static constexpr bool hasRequiredMembers = C implements CombinedTrait; // or: C <> CombinedTrait
 ```
 
 The goal is to make structural composition and structural checks easier to express directly in the language.

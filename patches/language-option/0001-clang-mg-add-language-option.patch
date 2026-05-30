@@ -1,14 +1,11 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: Mike <michaelgorney4@gmail.com>
 Date: Sun, 17 May 2026 20:02:35 -0400
-Subject: [PATCH] clang-mg: add language-option
+Subject: [PATCH 1/5] clang-mg: add language-option
 
----
- clang/include/clang/Basic/LangOptions.def | 1 +
- 1 file changed, 1 insertion(+)
 
 diff --git a/clang/include/clang/Basic/LangOptions.def b/clang/include/clang/Basic/LangOptions.def
-index 3bbb40ba09f0..0e26ff393017 100644
+index 4a3e3b7c0482..30b73389d373 100644
 --- a/clang/include/clang/Basic/LangOptions.def
 +++ b/clang/include/clang/Basic/LangOptions.def
 @@ -57,6 +57,7 @@ LANGOPT(CPlusPlus17       , 1, 0, NotCompatible, "C++17")

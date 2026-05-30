@@ -1,8 +1,20 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: Mike <michaelgorney4@gmail.com>
 Date: Sun, 24 May 2026 00:05:15 -0400
-Subject: [PATCH 3/8] clang-mg: update type-expressions
+Subject: [PATCH] clang-mg: update type-expressions
 
+---
+ clang/include/clang/AST/RecursiveASTVisitor.h |  4 ++
+ clang/include/clang/AST/TypeLoc.h             | 33 ++++++++++--
+ clang/lib/AST/ASTImporter.cpp                 | 54 +++++++++++++++++++
+ clang/lib/AST/ItaniumMangle.cpp               |  5 ++
+ clang/lib/AST/MicrosoftMangle.cpp             |  7 +++
+ clang/lib/Sema/SemaCXXMGTypeExpr.cpp          |  9 +++-
+ clang/lib/Sema/SemaTemplate.cpp               | 19 +++++++
+ clang/lib/Sema/TreeTransform.h                |  3 +-
+ clang/lib/Serialization/ASTReader.cpp         |  5 ++
+ clang/lib/Serialization/ASTWriter.cpp         |  5 ++
+ 10 files changed, 138 insertions(+), 6 deletions(-)
 
 diff --git a/clang/include/clang/AST/RecursiveASTVisitor.h b/clang/include/clang/AST/RecursiveASTVisitor.h
 index ed8043f43488..0ba697d213a0 100644
@@ -223,7 +235,7 @@ index b628f353e1ce..ee1cf38cb29c 100644
  }
  
 diff --git a/clang/lib/Sema/SemaTemplate.cpp b/clang/lib/Sema/SemaTemplate.cpp
-index 5667cf53fee0..e3a83cf4a585 100644
+index d478b723f6e6..13188d9acb02 100644
 --- a/clang/lib/Sema/SemaTemplate.cpp
 +++ b/clang/lib/Sema/SemaTemplate.cpp
 @@ -12,6 +12,7 @@
@@ -234,7 +246,7 @@ index 5667cf53fee0..e3a83cf4a585 100644
  #include "clang/AST/Decl.h"
  #include "clang/AST/DeclFriend.h"
  #include "clang/AST/DeclTemplate.h"
-@@ -6266,6 +6267,7 @@ namespace {
+@@ -6262,6 +6263,7 @@ namespace {
  
      bool VisitTagDecl(const TagDecl *Tag);
      bool VisitNestedNameSpecifier(NestedNameSpecifier NNS);
@@ -242,7 +254,7 @@ index 5667cf53fee0..e3a83cf4a585 100644
    };
  } // end anonymous namespace
  
-@@ -6395,6 +6397,23 @@ bool UnnamedLocalNoLinkageFinder::VisitPackIndexingType(
+@@ -6391,6 +6393,23 @@ bool UnnamedLocalNoLinkageFinder::VisitPackIndexingType(
    return false;
  }
  

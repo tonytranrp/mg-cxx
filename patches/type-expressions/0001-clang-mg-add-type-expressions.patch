@@ -1,8 +1,36 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: Mike <michaelgorney4@gmail.com>
 Date: Sat, 23 May 2026 21:31:20 -0400
-Subject: [PATCH 1/8] clang-mg: add type-expressions
+Subject: [PATCH] clang-mg: add type-expressions
 
+---
+ clang/include/clang/Basic/DiagnosticGroups.td |   3 +
+ clang/include/clang/Basic/DiagnosticIDs.h     |   2 +-
+ .../clang/Basic/DiagnosticParseKinds.td       |   7 +
+ .../clang/Basic/DiagnosticSemaKinds.td        |  26 +
+ clang/include/clang/Basic/Features.def        |   1 +
+ clang/include/clang/Parse/Parser.h            |  10 +
+ clang/include/clang/Sema/Sema.h               |  22 +
+ clang/lib/Frontend/InitPreprocessor.cpp       |   1 +
+ clang/lib/Parse/CMakeLists.txt                |   1 +
+ clang/lib/Parse/ParseCXXMGTypeExpr.cpp        | 213 +++++++
+ clang/lib/Parse/ParseDeclCXX.cpp              |  37 +-
+ clang/lib/Parse/ParseExpr.cpp                 |  18 +
+ clang/lib/Sema/CMakeLists.txt                 |   1 +
+ clang/lib/Sema/SemaCXXMGTypeExpr.cpp          | 563 ++++++++++++++++++
+ .../type-expr-add-records.cpp                 |  18 +
+ .../type-expr-associated-types.cpp            |  23 +
+ .../type-expressions/type-expr-conflicts.cpp  |   6 +
+ .../type-expressions/type-expr-predicates.cpp |  17 +
+ .../type-expr-subtract-records.cpp            |  10 +
+ 19 files changed, 973 insertions(+), 6 deletions(-)
+ create mode 100644 clang/lib/Parse/ParseCXXMGTypeExpr.cpp
+ create mode 100644 clang/lib/Sema/SemaCXXMGTypeExpr.cpp
+ create mode 100644 clang/test/CXXMG/type-expressions/type-expr-add-records.cpp
+ create mode 100644 clang/test/CXXMG/type-expressions/type-expr-associated-types.cpp
+ create mode 100644 clang/test/CXXMG/type-expressions/type-expr-conflicts.cpp
+ create mode 100644 clang/test/CXXMG/type-expressions/type-expr-predicates.cpp
+ create mode 100644 clang/test/CXXMG/type-expressions/type-expr-subtract-records.cpp
 
 diff --git a/clang/include/clang/Basic/DiagnosticGroups.td b/clang/include/clang/Basic/DiagnosticGroups.td
 index 8031f99419bd..f15bbf9dfb80 100644
@@ -49,10 +77,10 @@ index e1e16343e7bb..f5ed72337b06 100644
    "the number of preprocessor source tokens (%0) exceeds this token limit (%1)">,
    InGroup<MaxTokens>, DefaultIgnore;
 diff --git a/clang/include/clang/Basic/DiagnosticSemaKinds.td b/clang/include/clang/Basic/DiagnosticSemaKinds.td
-index 3d01939eebb6..0c9bd60ffa57 100644
+index 14004784730d..2a18a5f666b1 100644
 --- a/clang/include/clang/Basic/DiagnosticSemaKinds.td
 +++ b/clang/include/clang/Basic/DiagnosticSemaKinds.td
-@@ -14265,6 +14265,32 @@ def warn_comparison_in_enum_initializer : Warning<
+@@ -14271,6 +14271,32 @@ def warn_comparison_in_enum_initializer : Warning<
  def note_enum_compare_typo_suggest : Note<
    "use '%0' to perform a bitwise shift">;
  
@@ -119,7 +147,7 @@ index c4f2ddac174a..cbe944523201 100644
    /// static_assert-declaration.
    ///
 diff --git a/clang/include/clang/Sema/Sema.h b/clang/include/clang/Sema/Sema.h
-index f2726abbe4e1..ef2a0c39e77e 100644
+index d2a89fc6693f..04687a67b6ed 100644
 --- a/clang/include/clang/Sema/Sema.h
 +++ b/clang/include/clang/Sema/Sema.h
 @@ -197,6 +197,21 @@ class UnresolvedSetImpl;

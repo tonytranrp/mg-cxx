@@ -1,8 +1,15 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: Mike <michaelgorney4@gmail.com>
 Date: Sun, 24 May 2026 00:38:05 -0400
-Subject: [PATCH 4/8] clang-mg: update type-expressions
+Subject: [PATCH] clang-mg: update type-expressions
 
+---
+ clang/lib/Parse/ParseDeclCXX.cpp              | 81 ++++++++++++-------
+ .../type-expr-alias-parse-once-positive.cpp   | 15 ++++
+ ...expr-do-not-hijack-alias-template-args.cpp | 25 ++++++
+ 3 files changed, 93 insertions(+), 28 deletions(-)
+ create mode 100644 clang/test/CXXMG/type-expressions/type-expr-alias-parse-once-positive.cpp
+ create mode 100644 clang/test/CXXMG/type-expressions/type-expr-do-not-hijack-alias-template-args.cpp
 
 diff --git a/clang/lib/Parse/ParseDeclCXX.cpp b/clang/lib/Parse/ParseDeclCXX.cpp
 index ebdbb8af6f23..fc50fd51770b 100644

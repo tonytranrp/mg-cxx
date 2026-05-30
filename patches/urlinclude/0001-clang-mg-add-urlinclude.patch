@@ -134,10 +134,10 @@ index db80eecce490..8dfbf3d91bc6 100644
    /// the buffers associated with remapped files.
    ///
 diff --git a/clang/include/clang/Options/Options.td b/clang/include/clang/Options/Options.td
-index 753e3ac1b74a..b205638d1d2d 100644
+index 025e8e7d7d76..9b582bba0af9 100644
 --- a/clang/include/clang/Options/Options.td
 +++ b/clang/include/clang/Options/Options.td
-@@ -3112,6 +3112,37 @@ defm gnu89_inline : BoolFOption<"gnu89-inline",
+@@ -3119,6 +3119,37 @@ defm gnu89_inline : BoolFOption<"gnu89-inline",
    NegFlag<SetFalse>>, ShouldParseIf<!strconcat("!", cplusplus.KeyPath)>;
  def fgnu_runtime : Flag<["-"], "fgnu-runtime">, Group<f_Group>,
    HelpText<"Generate output compatible with the standard GNU Objective-C runtime">;
@@ -188,10 +188,10 @@ index 4f6c8ea04477..61435f62debd 100644
  
    CASE(14, '_', 'p', __public_macro);
 diff --git a/clang/lib/Driver/ToolChains/Clang.cpp b/clang/lib/Driver/ToolChains/Clang.cpp
-index 603bd0f32730..73e686751a00 100644
+index 0163ee5c27da..68833e7fac9c 100644
 --- a/clang/lib/Driver/ToolChains/Clang.cpp
 +++ b/clang/lib/Driver/ToolChains/Clang.cpp
-@@ -6312,6 +6312,16 @@ void Clang::ConstructJob(Compilation &C, const JobAction &JA,
+@@ -6335,6 +6335,16 @@ void Clang::ConstructJob(Compilation &C, const JobAction &JA,
    }
    Args.AddLastArg(CmdArgs, options::OPT_P);
    Args.AddLastArg(CmdArgs, options::OPT_print_ivar_layout);
@@ -209,10 +209,10 @@ index 603bd0f32730..73e686751a00 100644
    if (D.CCLogDiagnostics && !D.CCGenDiagnostics) {
      CmdArgs.push_back("-diagnostic-log-file");
 diff --git a/clang/lib/Frontend/CompilerInvocation.cpp b/clang/lib/Frontend/CompilerInvocation.cpp
-index 60749104252a..0d85b1d9d70a 100644
+index 9fc695a74a3c..4204d2b66eda 100644
 --- a/clang/lib/Frontend/CompilerInvocation.cpp
 +++ b/clang/lib/Frontend/CompilerInvocation.cpp
-@@ -4852,6 +4852,33 @@ static void GeneratePreprocessorArgs(const PreprocessorOptions &Opts,
+@@ -4855,6 +4855,33 @@ static void GeneratePreprocessorArgs(const PreprocessorOptions &Opts,
    for (const auto &EmbedEntry : Opts.EmbedEntries)
      GenerateArg(Consumer, OPT_embed_dir_EQ, EmbedEntry);
  
@@ -246,7 +246,7 @@ index 60749104252a..0d85b1d9d70a 100644
    // Don't handle LexEditorPlaceholders. It is implied by the action that is
    // generated elsewhere.
  }
-@@ -4938,6 +4965,36 @@ static bool ParsePreprocessorArgs(PreprocessorOptions &Opts, ArgList &Args,
+@@ -4941,6 +4968,36 @@ static bool ParsePreprocessorArgs(PreprocessorOptions &Opts, ArgList &Args,
      Opts.EmbedEntries.push_back(std::string(Val));
    }
  
@@ -329,7 +329,7 @@ index 2797212c229f..1a836824bcab 100644
      case pp_define:
      case pp_undef:
 diff --git a/clang/lib/Lex/PPDirectives.cpp b/clang/lib/Lex/PPDirectives.cpp
-index 12d3c765b15b..3c31a54f3f6c 100644
+index eb21a510dcf8..af7afada31d2 100644
 --- a/clang/lib/Lex/PPDirectives.cpp
 +++ b/clang/lib/Lex/PPDirectives.cpp
 @@ -43,19 +43,329 @@
@@ -662,7 +662,7 @@ index 12d3c765b15b..3c31a54f3f6c 100644
  //===----------------------------------------------------------------------===//
  // Utility Methods for Preprocessor Directive Handling.
  //===----------------------------------------------------------------------===//
-@@ -1354,6 +1664,7 @@ void Preprocessor::HandleDirective(Token &Result) {
+@@ -1350,6 +1660,7 @@ void Preprocessor::HandleDirective(Token &Result) {
      if (IdentifierInfo *II = Result.getIdentifierInfo()) {
        switch (II->getPPKeywordID()) {
        case tok::pp_include:
@@ -670,7 +670,7 @@ index 12d3c765b15b..3c31a54f3f6c 100644
        case tok::pp_import:
        case tok::pp_include_next:
        case tok::pp___include_macros:
-@@ -1436,6 +1747,9 @@ void Preprocessor::HandleDirective(Token &Result) {
+@@ -1432,6 +1743,9 @@ void Preprocessor::HandleDirective(Token &Result) {
      case tok::pp_include:
        // Handle #include.
        return HandleIncludeDirective(Introducer.getLocation(), Result);
@@ -680,7 +680,7 @@ index 12d3c765b15b..3c31a54f3f6c 100644
      case tok::pp___include_macros:
        // Handle -imacros.
        return HandleIncludeMacrosDirective(Introducer.getLocation(), Result);
-@@ -2237,6 +2551,98 @@ void Preprocessor::HandleIncludeDirective(SourceLocation HashLoc,
+@@ -2233,6 +2547,98 @@ void Preprocessor::HandleIncludeDirective(SourceLocation HashLoc,
    }
  }
  

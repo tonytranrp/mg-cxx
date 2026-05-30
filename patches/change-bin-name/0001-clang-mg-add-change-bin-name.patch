@@ -5,7 +5,7 @@ Subject: [PATCH 1/3] clang-mg: add change-bin-name
 
 
 diff --git a/clang/CMakeLists.txt b/clang/CMakeLists.txt
-index 40506fc8a154..1c497d2c36c6 100644
+index bbd0041fc9e3..7d3870988b67 100644
 --- a/clang/CMakeLists.txt
 +++ b/clang/CMakeLists.txt
 @@ -1,6 +1,10 @@

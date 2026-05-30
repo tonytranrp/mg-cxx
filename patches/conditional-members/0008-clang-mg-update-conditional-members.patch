@@ -24,7 +24,7 @@ index 7e874e2c57af..088a698719e5 100644
    /// ParseConstructorInitializer - Parse a C++ constructor initializer,
    /// which explicitly initializes the members or base classes of a
 diff --git a/clang/include/clang/Sema/Sema.h b/clang/include/clang/Sema/Sema.h
-index e71794b2d92c..aaae96891448 100644
+index 10d489dc96a3..89bdb0617cb4 100644
 --- a/clang/include/clang/Sema/Sema.h
 +++ b/clang/include/clang/Sema/Sema.h
 @@ -3909,6 +3909,17 @@ public:
@@ -77,7 +77,7 @@ index ea01e3263896..8a96f3ab6453 100644
        return 0;
    }
 diff --git a/clang/lib/CodeGen/CGDecl.cpp b/clang/lib/CodeGen/CGDecl.cpp
-index 7608f8cb6fc7..473740d751ee 100644
+index 63ad0bc9ec23..7a11acd93f8b 100644
 --- a/clang/lib/CodeGen/CGDecl.cpp
 +++ b/clang/lib/CodeGen/CGDecl.cpp
 @@ -108,6 +108,7 @@ void CodeGenFunction::EmitDecl(const Decl &D, bool EvaluateConditionDecl) {
@@ -257,7 +257,7 @@ index b2d281464004..20cd1d4a1d42 100644
 +  return SourceRange(LBraceLoc, RBraceLoc);
 +}
 diff --git a/clang/lib/Sema/SemaDecl.cpp b/clang/lib/Sema/SemaDecl.cpp
-index 62cb9360d132..439a1608dece 100644
+index cddcf3a01027..44723750bccf 100644
 --- a/clang/lib/Sema/SemaDecl.cpp
 +++ b/clang/lib/Sema/SemaDecl.cpp
 @@ -6693,7 +6693,8 @@ NamedDecl *Sema::HandleDeclarator(Scope *S, Declarator &D,
@@ -282,7 +282,7 @@ index 62cb9360d132..439a1608dece 100644
      // with the same name in the same scope.
    } else if (II) {
 diff --git a/clang/lib/Sema/SemaDeclCXX.cpp b/clang/lib/Sema/SemaDeclCXX.cpp
-index daebee54feea..f56ae0e66d20 100644
+index 9bbe99df064c..b8bd7d06bbc4 100644
 --- a/clang/lib/Sema/SemaDeclCXX.cpp
 +++ b/clang/lib/Sema/SemaDeclCXX.cpp
 @@ -3464,6 +3464,79 @@ static bool IsUnusedPrivateField(const FieldDecl *FD) {
@@ -378,7 +378,7 @@ index daebee54feea..f56ae0e66d20 100644
  
    if (isInstField) {
 diff --git a/clang/lib/Sema/SemaTemplateInstantiate.cpp b/clang/lib/Sema/SemaTemplateInstantiate.cpp
-index f168c99d1ac1..c29eef928fb7 100644
+index 6e34261c3e61..0e5aca969a97 100644
 --- a/clang/lib/Sema/SemaTemplateInstantiate.cpp
 +++ b/clang/lib/Sema/SemaTemplateInstantiate.cpp
 @@ -3586,7 +3586,47 @@ bool Sema::InstantiateClassImpl(
