@@ -17,5 +17,5 @@ index 4a3e3b7c0482..30b73389d373 100644
  LANGOPT(ObjCDefaultSynthProperties , 1, 0, Benign,
          "Objective-C auto-synthesized properties")
 -- 
-2.52.0.windows.1
+2.54.0
 
