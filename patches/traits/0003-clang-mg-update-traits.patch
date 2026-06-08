@@ -8,7 +8,7 @@ Subject: [PATCH] clang-mg: update traits
  1 file changed, 15 insertions(+), 2 deletions(-)
 
 diff --git a/clang/lib/Sema/SemaDeclCXXMG.cpp b/clang/lib/Sema/SemaDeclCXXMG.cpp
-index 9105920532e6..acb4ec513a11 100644
+index 2f50d8cb4e3c..8061da693393 100644
 --- a/clang/lib/Sema/SemaDeclCXXMG.cpp
 +++ b/clang/lib/Sema/SemaDeclCXXMG.cpp
 @@ -4,9 +4,23 @@
@@ -33,10 +33,10 @@ index 9105920532e6..acb4ec513a11 100644
  using namespace clang;
  
 -namespace {
- void Sema::BeginCXXMGConditionalMemberArm(CXXRecordDecl *TargetRecord,
-                                           AccessSpecifier AS) {
-   assert(TargetRecord && "conditional member arm needs a target record");
-@@ -145,5 +159,4 @@ void Sema::ActOnCXXMGTraitMemberDeclaration(Decl *TraitDecl,
+ Decl *Sema::ActOnCXXMGTraitAssociatedTypeRequirement(
+     Scope *S, Decl *TraitDecl, SourceLocation UsingLoc, SourceLocation NameLoc,
+     IdentifierInfo *Name) {
+@@ -69,5 +83,4 @@ void Sema::ActOnCXXMGTraitMemberDeclaration(Decl *TraitDecl,
      }
      Diag(D->getLocation(), diag::err_cxxmg_trait_invalid_member);
    }

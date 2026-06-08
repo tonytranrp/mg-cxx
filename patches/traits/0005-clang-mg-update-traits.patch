@@ -1,0 +1,26 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Mike <michaelgorney4@gmail.com>
+Date: Mon, 8 Jun 2026 12:46:03 -0400
+Subject: [PATCH] clang-mg: update traits
+
+---
+ clang/lib/Parse/ParseDeclCXXMG.cpp | 2 ++
+ 1 file changed, 2 insertions(+)
+
+diff --git a/clang/lib/Parse/ParseDeclCXXMG.cpp b/clang/lib/Parse/ParseDeclCXXMG.cpp
+index 8fb795fb5767..86652aaac919 100644
+--- a/clang/lib/Parse/ParseDeclCXXMG.cpp
++++ b/clang/lib/Parse/ParseDeclCXXMG.cpp
+@@ -5,7 +5,9 @@
+ //
+ //===----------------------------------------------------------------------===//
+ 
++#include "clang/Basic/DiagnosticParse.h"
+ #include "clang/Parse/Parser.h"
++#include "clang/Parse/RAIIObjectsForParser.h"
+ 
+ using namespace clang;
+ 
+-- 
+2.54.0
+

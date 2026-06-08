@@ -1,0 +1,105 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Mike <michaelgorney4@gmail.com>
+Date: Mon, 8 Jun 2026 12:37:57 -0400
+Subject: [PATCH] clang-mg: update traits
+
+---
+ clang/lib/Parse/CMakeLists.txt     |  1 +
+ clang/lib/Parse/ParseDeclCXXMG.cpp | 72 ++++++++++++++++++++++++++++++
+ 2 files changed, 73 insertions(+)
+ create mode 100644 clang/lib/Parse/ParseDeclCXXMG.cpp
+
+diff --git a/clang/lib/Parse/CMakeLists.txt b/clang/lib/Parse/CMakeLists.txt
+index 8dd120f529b1..07169bfc9129 100644
+--- a/clang/lib/Parse/CMakeLists.txt
++++ b/clang/lib/Parse/CMakeLists.txt
+@@ -12,6 +12,7 @@ add_clang_library(clangParse
+   ParseCXXInlineMethods.cpp
+   ParseDecl.cpp
+   ParseDeclCXX.cpp
++  ParseDeclCXXMG.cpp
+   ParseExpr.cpp
+   ParseExprCXX.cpp
+   ParseHLSL.cpp
+diff --git a/clang/lib/Parse/ParseDeclCXXMG.cpp b/clang/lib/Parse/ParseDeclCXXMG.cpp
+new file mode 100644
+index 000000000000..8fb795fb5767
+--- /dev/null
++++ b/clang/lib/Parse/ParseDeclCXXMG.cpp
+@@ -0,0 +1,72 @@
++//===--- ParseDeclCXXMG.cpp - C++MG Declaration Parsing -------*- C++MG -*-===//
++//
++//  This file implements the C++MG Declaration portions of the Parser
++//  interfaces.
++//
++//===----------------------------------------------------------------------===//
++
++#include "clang/Parse/Parser.h"
++
++using namespace clang;
++
++Parser::DeclGroupPtrTy Parser::ParseCXXMGTraitMemberDeclaration(
++    AccessSpecifier &AS, ParsedAttributes &AccessAttrs, Decl *TagDecl) {
++  if (Tok.isOneOf(tok::kw_private, tok::kw_public, tok::kw_protected) &&
++      NextToken().is(tok::colon)) {
++    Diag(Tok.getLocation(), diag::err_cxxmg_trait_access_specifier);
++    ConsumeToken();
++    ConsumeToken();
++    return nullptr;
++  }
++
++  if (Tok.is(tok::kw_using) && NextToken().is(tok::identifier) &&
++      GetLookAheadToken(2).is(tok::semi)) {
++    SourceLocation UsingLoc = ConsumeToken();
++    SourceLocation NameLoc = Tok.getLocation();
++    IdentifierInfo *Name = Tok.getIdentifierInfo();
++    ConsumeToken();
++    ConsumeToken();
++    Decl *D = Actions.ActOnCXXMGTraitAssociatedTypeRequirement(
++        getCurScope(), TagDecl, UsingLoc, NameLoc, Name);
++    return DeclGroupPtrTy::make(DeclGroupRef(D));
++  }
++
++  if (Tok.is(tok::kw_static) && NextToken().is(tok::identifier) &&
++      GetLookAheadToken(2).is(tok::l_paren)) {
++    SourceLocation StaticLoc = ConsumeToken();
++    SourceLocation NameLoc = Tok.getLocation();
++    IdentifierInfo *Name = Tok.getIdentifierInfo();
++    ConsumeToken();
++    BalancedDelimiterTracker T(*this, tok::l_paren);
++    T.consumeOpen();
++    if (Tok.isNot(tok::r_paren))
++      SkipUntil(tok::r_paren, StopBeforeMatch);
++    T.consumeClose();
++    ExpectAndConsume(tok::semi);
++    Decl *D = Actions.ActOnCXXMGTraitStaticFunctionRequirement(
++        getCurScope(), TagDecl, StaticLoc, NameLoc, Name, nullptr);
++    return DeclGroupPtrTy::make(DeclGroupRef(D));
++  }
++
++  tok::TokenKind PrevKind = tok::unknown;
++  for (unsigned I = 0; Tok.isNot(tok::eof); ++I) {
++    const Token &Lookahead = GetLookAheadToken(I);
++    if (Lookahead.isOneOf(tok::semi, tok::r_brace))
++      break;
++    if (Lookahead.is(tok::l_brace) && PrevKind == tok::r_paren) {
++      Diag(Lookahead.getLocation(), diag::err_cxxmg_trait_function_body);
++      for (unsigned J = 0; J < I; ++J)
++        ConsumeAnyToken();
++      ConsumeBrace();
++      SkipUntil(tok::r_brace);
++      TryConsumeToken(tok::semi);
++      return nullptr;
++    }
++    PrevKind = Lookahead.getKind();
++  }
++
++  DeclGroupPtrTy DG = ParseCXXClassMemberDeclarationWithPragmas(
++      AS, AccessAttrs, DeclSpec::TST_trait, TagDecl);
++  Actions.ActOnCXXMGTraitMemberDeclaration(TagDecl, DG);
++  return DG;
++}
+\ No newline at end of file
+-- 
+2.54.0
+

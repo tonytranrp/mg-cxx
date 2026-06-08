@@ -4,10 +4,10 @@ Date: Sat, 23 May 2026 19:23:48 -0400
 Subject: [PATCH] clang-mg: update traits
 
 ---
- clang/lib/Sema/CMakeLists.txt    |   1 +
- clang/lib/Sema/SemaDeclCXX.cpp   |  64 -------------
- clang/lib/Sema/SemaDeclCXXMG.cpp | 149 +++++++++++++++++++++++++++++++
- 3 files changed, 150 insertions(+), 64 deletions(-)
+ clang/lib/Sema/CMakeLists.txt    |  1 +
+ clang/lib/Sema/SemaDeclCXX.cpp   | 64 ----------------------------
+ clang/lib/Sema/SemaDeclCXXMG.cpp | 73 ++++++++++++++++++++++++++++++++
+ 3 files changed, 74 insertions(+), 64 deletions(-)
  create mode 100644 clang/lib/Sema/SemaDeclCXXMG.cpp
 
 diff --git a/clang/lib/Sema/CMakeLists.txt b/clang/lib/Sema/CMakeLists.txt
@@ -99,10 +99,10 @@ index 7ad0de86ae4f..9f9e76bf336b 100644
                                 MultiTemplateParamsArg TemplateParameterLists,
 diff --git a/clang/lib/Sema/SemaDeclCXXMG.cpp b/clang/lib/Sema/SemaDeclCXXMG.cpp
 new file mode 100644
-index 000000000000..9105920532e6
+index 000000000000..2f50d8cb4e3c
 --- /dev/null
 +++ b/clang/lib/Sema/SemaDeclCXXMG.cpp
-@@ -0,0 +1,149 @@
+@@ -0,0 +1,73 @@
 +//===------ SemaDeclCXXMG.cpp - Semantic Analysis for C++MG Declarations ------===//
 +//
 +//  This file implements semantic analysis for C++MG declarations.
@@ -112,82 +112,6 @@ index 000000000000..9105920532e6
 +using namespace clang;
 +
 +namespace {
-+void Sema::BeginCXXMGConditionalMemberArm(CXXRecordDecl *TargetRecord,
-+                                          AccessSpecifier AS) {
-+  assert(TargetRecord && "conditional member arm needs a target record");
-+
-+  CXXMGConditionalMemberArmState State;
-+  State.TargetRecord = TargetRecord;
-+  State.StartAS = AS;
-+  CXXMGConditionalMemberArmStack.push_back(std::move(State));
-+}
-+
-+void Sema::EndCXXMGConditionalMemberArm(
-+    llvm::SmallVectorImpl<Decl *> &OutPatternDecls) {
-+  assert(!CXXMGConditionalMemberArmStack.empty() &&
-+         "ending conditional member arm without active state");
-+
-+  CXXMGConditionalMemberArmState &State =
-+      CXXMGConditionalMemberArmStack.back();
-+  OutPatternDecls.append(State.PatternDecls.begin(), State.PatternDecls.end());
-+  CXXMGConditionalMemberArmStack.pop_back();
-+}
-+
-+bool Sema::isCollectingCXXMGConditionalMemberForCurrentContext() const {
-+  return !CXXMGConditionalMemberArmStack.empty() &&
-+         CXXMGConditionalMemberArmStack.back().TargetRecord == CurContext;
-+}
-+
-+void Sema::AddCXXMGConditionalMemberPatternDecl(Decl *D) {
-+  assert(D && "cannot collect a null conditional member pattern declaration");
-+  assert(isCollectingCXXMGConditionalMemberForCurrentContext() &&
-+         "collecting a conditional member pattern from the wrong context");
-+  CXXMGConditionalMemberArmStack.back().PatternDecls.push_back(D);
-+}
-+
-+Decl *Sema::ActOnCXXMGConditionalMember(
-+    Scope *S, Decl *TagDecl, SourceLocation IfLoc,
-+    llvm::ArrayRef<CXXMGConditionalMemberArm> Arms) {
-+  CXXRecordDecl *Record = dyn_cast_or_null<CXXRecordDecl>(TagDecl);
-+  if (!Record)
-+    if (auto *Template = dyn_cast_or_null<ClassTemplateDecl>(TagDecl))
-+      Record = Template->getTemplatedDecl();
-+  if (!Record)
-+    return nullptr;
-+
-+  auto *D = CXXMGConditionalMemberDecl::Create(Context, Record, IfLoc, Arms);
-+  Record->addDecl(D);
-+
-+  for (const CXXMGConditionalMemberArm &Arm : D->arms()) {
-+    bool Selected = Arm.isElseArm();
-+    if (Arm.hasCondition()) {
-+      if (Arm.Condition->isValueDependent())
-+        break;
-+
-+      bool ConditionValue = false;
-+      if (!Arm.Condition->EvaluateAsBooleanCondition(ConditionValue, Context))
-+        continue;
-+
-+      Selected = ConditionValue;
-+    }
-+
-+    if (!Selected)
-+      continue;
-+
-+    for (Decl *Pattern : Arm.Decls) {
-+      Record->addDecl(Pattern);
-+      if (auto *BUD = dyn_cast<BaseUsingDecl>(Pattern))
-+        for (UsingShadowDecl *Shadow : BUD->shadows())
-+          Record->addDecl(Shadow);
-+      if (auto *FD = dyn_cast<FieldDecl>(Pattern))
-+        FieldCollector->Add(FD);
-+    }
-+    break;
-+  }
-+
-+  return D;
-+}
-+
 +Decl *Sema::ActOnCXXMGTraitAssociatedTypeRequirement(
 +    Scope *S, Decl *TraitDecl, SourceLocation UsingLoc, SourceLocation NameLoc,
 +    IdentifierInfo *Name) {
