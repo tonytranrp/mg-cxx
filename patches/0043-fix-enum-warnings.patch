@@ -1,0 +1,421 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Mike <michaelgorney4@gmail.com>
+Date: Tue, 9 Jun 2026 19:31:27 -0400
+Subject: [PATCH] Fix enum warnings
+
+
+diff --git a/clang/include/clang/AST/CXXMGTypeExpr.h b/clang/include/clang/AST/CXXMGTypeExpr.h
+index 886c34175216..852acb15553b 100644
+--- a/clang/include/clang/AST/CXXMGTypeExpr.h
++++ b/clang/include/clang/AST/CXXMGTypeExpr.h
+@@ -20,6 +20,7 @@ class FoldingSetNodeID;
+ namespace clang {
+ 
+ class ASTContext;
++class CXXMGTypeExprNode;
+ class TypeSourceInfo;
+ 
+ enum class CXXMGTypeExprOpcode : unsigned {
+@@ -30,6 +31,9 @@ enum class CXXMGTypeExprOpcode : unsigned {
+ 
+ const char *getCXXMGTypeExprOpcodeSpelling(CXXMGTypeExprOpcode Op);
+ 
++bool isSameCXXMGTypeExprNode(const ASTContext &Ctx, const CXXMGTypeExprNode *A,
++                             const CXXMGTypeExprNode *B);
++
+ class CXXMGTypeExprNode {
+ public:
+   enum NodeKind : unsigned {
+diff --git a/clang/lib/AST/ASTContext.cpp b/clang/lib/AST/ASTContext.cpp
+index 191fe285daa0..7f25214ccbde 100644
+--- a/clang/lib/AST/ASTContext.cpp
++++ b/clang/lib/AST/ASTContext.cpp
+@@ -4344,6 +4344,7 @@ QualType ASTContext::getVariableArrayDecayedType(QualType type) const {
+   case Type::HLSLAttributedResource:
+   case Type::HLSLInlineSpirv:
+   case Type::OverflowBehavior:
++  case Type::CXXMGTypeExpr:
+     llvm_unreachable("type should never be variably-modified");
+ 
+   // These types can be variably-modified but should never need to
+@@ -6047,6 +6048,7 @@ getCanonicalElaboratedTypeKeyword(ElaboratedTypeKeyword Keyword) {
+   case ElaboratedTypeKeyword::Union:
+   case ElaboratedTypeKeyword::Enum:
+   case ElaboratedTypeKeyword::Interface:
++  case ElaboratedTypeKeyword::Trait:
+     return Keyword;
+ 
+   // These are equivalent.
+@@ -14461,6 +14463,13 @@ static QualType getCommonNonSugarTypeNode(const ASTContext &Ctx, const Type *X,
+     const auto *CX = cast<ComplexType>(X), *CY = cast<ComplexType>(Y);
+     return Ctx.getComplexType(getCommonArrayElementType(Ctx, CX, QX, CY, QY));
+   }
++  case Type::CXXMGTypeExpr: {
++    const auto *TX = cast<CXXMGTypeExprType>(X);
++    const auto *TY = cast<CXXMGTypeExprType>(Y);
++    assert(isSameCXXMGTypeExprNode(Ctx, TX->getTypeExprNode(),
++                                   TY->getTypeExprNode()));
++    return QualType(TX, 0);
++  }
+   case Type::Pointer: {
+     const auto *PX = cast<PointerType>(X), *PY = cast<PointerType>(Y);
+     return Ctx.getPointerType(getCommonPointeeType(Ctx, PX, PY));
+diff --git a/clang/lib/AST/ASTStructuralEquivalence.cpp b/clang/lib/AST/ASTStructuralEquivalence.cpp
+index e8bda5d4ec32..b6594c10f80e 100644
+--- a/clang/lib/AST/ASTStructuralEquivalence.cpp
++++ b/clang/lib/AST/ASTStructuralEquivalence.cpp
+@@ -62,6 +62,7 @@
+ #include "clang/AST/ASTContext.h"
+ #include "clang/AST/ASTDiagnostic.h"
+ #include "clang/AST/Attr.h"
++#include "clang/AST/CXXMGTypeExpr.h"
+ #include "clang/AST/Decl.h"
+ #include "clang/AST/DeclBase.h"
+ #include "clang/AST/DeclCXX.h"
+@@ -994,6 +995,13 @@ bool ASTStructuralEquivalence::isEquivalent(
+       return false;
+     break;
+ 
++  case Type::CXXMGTypeExpr:
++    if (!isSameCXXMGTypeExprNode(
++            Context.FromCtx, cast<CXXMGTypeExprType>(T1)->getTypeExprNode(),
++            cast<CXXMGTypeExprType>(T2)->getTypeExprNode()))
++      return false;
++    break;
++
+   case Type::Adjusted:
+   case Type::Decayed:
+   case Type::ArrayParameter:
+diff --git a/clang/lib/AST/CXXMGTypeExpr.cpp b/clang/lib/AST/CXXMGTypeExpr.cpp
+index eb65f560f88d..7777373898de 100644
+--- a/clang/lib/AST/CXXMGTypeExpr.cpp
++++ b/clang/lib/AST/CXXMGTypeExpr.cpp
+@@ -26,6 +26,31 @@ const char *clang::getCXXMGTypeExprOpcodeSpelling(CXXMGTypeExprOpcode Op) {
+   llvm_unreachable("unknown C++MG type-expression opcode");
+ }
+ 
++bool clang::isSameCXXMGTypeExprNode(const ASTContext &Ctx,
++                                    const CXXMGTypeExprNode *A,
++                                    const CXXMGTypeExprNode *B) {
++  if (A == B)
++    return true;
++  if (!A || !B || A->getKind() != B->getKind())
++    return false;
++
++  switch (A->getKind()) {
++  case CXXMGTypeExprNode::Operand: {
++    TypeSourceInfo *ATSI = A->getOperandTypeSourceInfo();
++    TypeSourceInfo *BTSI = B->getOperandTypeSourceInfo();
++    if (!ATSI || !BTSI)
++      return ATSI == BTSI;
++    return ASTContext::hasSameType(ATSI->getType(), BTSI->getType());
++  }
++  case CXXMGTypeExprNode::Binary:
++    return A->getOpcode() == B->getOpcode() &&
++           isSameCXXMGTypeExprNode(Ctx, A->getLHS(), B->getLHS()) &&
++           isSameCXXMGTypeExprNode(Ctx, A->getRHS(), B->getRHS());
++  }
++
++  llvm_unreachable("unknown C++MG type-expression node kind");
++}
++
+ CXXMGTypeExprNode::CXXMGTypeExprNode(
+     TypeSourceInfo *OperandTSI, SourceRange Range, bool Dependent,
+     bool InstantiationDependent, bool ContainsUnexpandedParameterPack)
+diff --git a/clang/lib/AST/Expr.cpp b/clang/lib/AST/Expr.cpp
+index 24698fc0ec67..30cef70871bb 100644
+--- a/clang/lib/AST/Expr.cpp
++++ b/clang/lib/AST/Expr.cpp
+@@ -3820,6 +3820,8 @@ bool Expr::HasSideEffects(const ASTContext &Ctx,
+   case TypeTraitExprClass:
+   case ArrayTypeTraitExprClass:
+   case ExpressionTraitExprClass:
++  case CXXMGTypeCheckExprClass:
++  case CXXMGImplementsExprClass:
+   case CXXNoexceptExprClass:
+   case SizeOfPackExprClass:
+   case ObjCStringLiteralClass:
+diff --git a/clang/lib/AST/ExprClassification.cpp b/clang/lib/AST/ExprClassification.cpp
+index d153afda71c4..d83725d87e52 100644
+--- a/clang/lib/AST/ExprClassification.cpp
++++ b/clang/lib/AST/ExprClassification.cpp
+@@ -195,6 +195,8 @@ static Cl::Kinds ClassifyInternal(ASTContext &Ctx, const Expr *E) {
+   case Expr::TypeTraitExprClass:
+   case Expr::ArrayTypeTraitExprClass:
+   case Expr::ExpressionTraitExprClass:
++  case Expr::CXXMGTypeCheckExprClass:
++  case Expr::CXXMGImplementsExprClass:
+   case Expr::ObjCSelectorExprClass:
+   case Expr::ObjCProtocolExprClass:
+   case Expr::ObjCStringLiteralClass:
+diff --git a/clang/lib/AST/ExprConstant.cpp b/clang/lib/AST/ExprConstant.cpp
+index d52f94a22597..7be6e4ceca74 100644
+--- a/clang/lib/AST/ExprConstant.cpp
++++ b/clang/lib/AST/ExprConstant.cpp
+@@ -21929,6 +21929,8 @@ static ICEDiag CheckICE(const Expr* E, const ASTContext &Ctx) {
+   case Expr::CXXBoolLiteralExprClass:
+   case Expr::CXXScalarValueInitExprClass:
+   case Expr::TypeTraitExprClass:
++  case Expr::CXXMGTypeCheckExprClass:
++  case Expr::CXXMGImplementsExprClass:
+   case Expr::ConceptSpecializationExprClass:
+   case Expr::RequiresExprClass:
+   case Expr::ArrayTypeTraitExprClass:
+diff --git a/clang/lib/AST/ItaniumMangle.cpp b/clang/lib/AST/ItaniumMangle.cpp
+index df7574f254a1..d0d0fbc2c58e 100644
+--- a/clang/lib/AST/ItaniumMangle.cpp
++++ b/clang/lib/AST/ItaniumMangle.cpp
+@@ -24,6 +24,7 @@
+ #include "clang/AST/DeclTemplate.h"
+ #include "clang/AST/Expr.h"
+ #include "clang/AST/ExprCXX.h"
++#include "clang/AST/ExprCXXMG.h"
+ #include "clang/AST/ExprConcepts.h"
+ #include "clang/AST/ExprObjC.h"
+ #include "clang/AST/Mangle.h"
+@@ -2448,6 +2449,7 @@ bool CXXNameMangler::mangleUnresolvedTypeOrSimpleId(QualType Ty,
+   case Type::DependentAddressSpace:
+   case Type::DependentVector:
+   case Type::DependentSizedExtVector:
++  case Type::CXXMGTypeExpr:
+   case Type::Vector:
+   case Type::ExtVector:
+   case Type::ConstantMatrix:
+@@ -4512,6 +4514,7 @@ void CXXNameMangler::mangleType(const DependentNameType *T) {
+   case ElaboratedTypeKeyword::Struct:
+   case ElaboratedTypeKeyword::Class:
+   case ElaboratedTypeKeyword::Interface:
++  case ElaboratedTypeKeyword::Trait:
+     Out << "Ts";
+     break;
+   case ElaboratedTypeKeyword::Union:
+@@ -5039,6 +5042,7 @@ recurse:
+   case Expr::StmtExprClass:
+   case Expr::ArrayTypeTraitExprClass:
+   case Expr::ExpressionTraitExprClass:
++  case Expr::CXXMGImplementsExprClass:
+   case Expr::VAArgExprClass:
+   case Expr::CUDAKernelCallExprClass:
+   case Expr::AsTypeExprClass:
+@@ -5482,6 +5486,19 @@ recurse:
+     break;
+   }
+ 
++  case Expr::CXXMGTypeCheckExprClass: {
++    const auto *TE = cast<CXXMGTypeCheckExpr>(E);
++    if (!TE->hasKnownValue()) {
++      NotPrimaryExpr();
++      DiagnosticsEngine &Diags = Context.getDiags();
++      Diags.Report(E->getExprLoc(), diag::err_unsupported_itanium_expr_mangling)
++          << E->getStmtClassName() << E->getSourceRange();
++      break;
++    }
++    Out << "Lb" << (TE->getKnownValue() ? '1' : '0') << 'E';
++    break;
++  }
++
+   case Expr::CXXThrowExprClass: {
+     NotPrimaryExpr();
+     const CXXThrowExpr *TE = cast<CXXThrowExpr>(E);
+diff --git a/clang/lib/AST/MicrosoftMangle.cpp b/clang/lib/AST/MicrosoftMangle.cpp
+index 411d0af7a1eb..d4f5cb69d438 100644
+--- a/clang/lib/AST/MicrosoftMangle.cpp
++++ b/clang/lib/AST/MicrosoftMangle.cpp
+@@ -3435,6 +3435,7 @@ void MicrosoftCXXNameMangler::mangleTagTypeKind(TagTypeKind TTK) {
+     break;
+   case TagTypeKind::Struct:
+   case TagTypeKind::Interface:
++  case TagTypeKind::Trait:
+     Out << 'U';
+     break;
+   case TagTypeKind::Class:
+diff --git a/clang/lib/AST/Type.cpp b/clang/lib/AST/Type.cpp
+index cedda36ade27..40d7f1723f84 100644
+--- a/clang/lib/AST/Type.cpp
++++ b/clang/lib/AST/Type.cpp
+@@ -5202,6 +5202,7 @@ bool Type::canHaveNullability(bool ResultIfUnknown) const {
+   case Type::TypeOf:
+   case Type::Decltype:
+   case Type::PackIndexing:
++  case Type::CXXMGTypeExpr:
+   case Type::UnaryTransform:
+   case Type::TemplateTypeParm:
+   case Type::SubstTemplateTypeParmPack:
+diff --git a/clang/lib/AST/TypePrinter.cpp b/clang/lib/AST/TypePrinter.cpp
+index 2646d0ee9abe..bdb2e362ba98 100644
+--- a/clang/lib/AST/TypePrinter.cpp
++++ b/clang/lib/AST/TypePrinter.cpp
+@@ -263,6 +263,7 @@ bool TypePrinter::canPrefixQualifiers(const Type *T,
+     case Type::HLSLAttributedResource:
+     case Type::HLSLInlineSpirv:
+     case Type::PredefinedSugar:
++    case Type::CXXMGTypeExpr:
+       CanPrefixQualifiers = true;
+       break;
+ 
+diff --git a/clang/lib/CodeGen/CGDecl.cpp b/clang/lib/CodeGen/CGDecl.cpp
+index 473740d751ee..409364b7b6a9 100644
+--- a/clang/lib/CodeGen/CGDecl.cpp
++++ b/clang/lib/CodeGen/CGDecl.cpp
+@@ -110,6 +110,8 @@ void CodeGenFunction::EmitDecl(const Decl &D, bool EvaluateConditionDecl) {
+   case Decl::HLSLRootSignature:
+   case Decl::CXXMGConditionalMember:
+     llvm_unreachable("Declaration should not be in declstmts!");
++  case Decl::TraitRequirement:
++    return;
+   case Decl::Record:    // struct/union/class X;
+   case Decl::CXXRecord: // struct/union/class X; [C++]
+     if (CGDebugInfo *DI = getDebugInfo())
+diff --git a/clang/lib/Sema/SemaCodeComplete.cpp b/clang/lib/Sema/SemaCodeComplete.cpp
+index bef5eea9ed44..c8177e027a3a 100644
+--- a/clang/lib/Sema/SemaCodeComplete.cpp
++++ b/clang/lib/Sema/SemaCodeComplete.cpp
+@@ -2117,6 +2117,8 @@ static const char *GetCompletionTypeString(QualType T, ASTContext &Context,
+             return "__interface <anonymous>";
+           case TagTypeKind::Class:
+             return "class <anonymous>";
++          case TagTypeKind::Trait:
++            return "trait <anonymous>";
+           case TagTypeKind::Union:
+             return "union <anonymous>";
+           case TagTypeKind::Enum:
+@@ -4508,6 +4510,7 @@ CXCursorKind clang::getCursorKindForDecl(const Decl *D) {
+       switch (TD->getTagKind()) {
+       case TagTypeKind::Interface: // fall through
+       case TagTypeKind::Struct:
++      case TagTypeKind::Trait:
+         return CXCursor_StructDecl;
+       case TagTypeKind::Class:
+         return CXCursor_ClassDecl;
+diff --git a/clang/lib/Sema/SemaExceptionSpec.cpp b/clang/lib/Sema/SemaExceptionSpec.cpp
+index 40d530a1f392..865dd9f6305a 100644
+--- a/clang/lib/Sema/SemaExceptionSpec.cpp
++++ b/clang/lib/Sema/SemaExceptionSpec.cpp
+@@ -1390,6 +1390,8 @@ CanThrowResult Sema::canThrow(const Stmt *S) {
+   case Expr::ArrayTypeTraitExprClass:
+   case Expr::AtomicExprClass:
+   case Expr::TypeTraitExprClass:
++  case Expr::CXXMGTypeCheckExprClass:
++  case Expr::CXXMGImplementsExprClass:
+   case Expr::CXXBoolLiteralExprClass:
+   case Expr::CXXNoexceptExprClass:
+   case Expr::CXXNullPtrLiteralExprClass:
+diff --git a/clang/lib/Sema/SemaTemplateDeduction.cpp b/clang/lib/Sema/SemaTemplateDeduction.cpp
+index 3d81653e4e01..1c5ce0afbf2b 100644
+--- a/clang/lib/Sema/SemaTemplateDeduction.cpp
++++ b/clang/lib/Sema/SemaTemplateDeduction.cpp
+@@ -1862,6 +1862,9 @@ static TemplateDeductionResult DeduceTemplateArgumentsByTypeMatch(
+     case Type::SubstBuiltinTemplatePack:
+       llvm_unreachable("Type nodes handled above");
+ 
++    case Type::CXXMGTypeExpr:
++      return TemplateDeductionResult::Success;
++
+     case Type::Auto:
+       // C++23 [temp.deduct.funcaddr]/3:
+       //   A placeholder type in the return type of a function template is a
+@@ -6767,6 +6770,9 @@ MarkUsedTemplateParameters(ASTContext &Ctx, QualType T,
+ 
+   T = Ctx.getCanonicalType(T);
+   switch (T->getTypeClass()) {
++  case Type::CXXMGTypeExpr:
++    break;
++
+   case Type::Pointer:
+     MarkUsedTemplateParameters(Ctx,
+                                cast<PointerType>(T)->getPointeeType(),
+diff --git a/clang/lib/Sema/SemaTemplateVariadic.cpp b/clang/lib/Sema/SemaTemplateVariadic.cpp
+index 5b1aad3fa847..b6ad89b58ce2 100644
+--- a/clang/lib/Sema/SemaTemplateVariadic.cpp
++++ b/clang/lib/Sema/SemaTemplateVariadic.cpp
+@@ -1182,6 +1182,7 @@ bool Sema::containsUnexpandedParameterPacks(Declarator &D) {
+   case TST_enum:
+   case TST_union:
+   case TST_struct:
++  case TST_trait:
+   case TST_interface:
+   case TST_class:
+   case TST_auto:
+diff --git a/clang/lib/Sema/SemaType.cpp b/clang/lib/Sema/SemaType.cpp
+index 6283fe4f41f3..fdf11dd4058e 100644
+--- a/clang/lib/Sema/SemaType.cpp
++++ b/clang/lib/Sema/SemaType.cpp
+@@ -1217,6 +1217,7 @@ static QualType ConvertDeclSpecToType(TypeProcessingState &state) {
+   case DeclSpec::TST_enum:
+   case DeclSpec::TST_union:
+   case DeclSpec::TST_struct:
++  case DeclSpec::TST_trait:
+   case DeclSpec::TST_interface: {
+     TagDecl *D = dyn_cast_or_null<TagDecl>(DS.getRepAsDecl());
+     if (!D) {
+@@ -3328,6 +3329,7 @@ static QualType GetDeclSpecTypeForDeclarator(TypeProcessingState &state,
+           Error = Cxx ? 3 : 4; /* Union member */
+           break;
+         case TagTypeKind::Class:
++        case TagTypeKind::Trait:
+           Error = 5; /* Class member */
+           break;
+         case TagTypeKind::Interface:
+diff --git a/clang/lib/Serialization/ASTCommon.cpp b/clang/lib/Serialization/ASTCommon.cpp
+index 49e6fe8004ce..8346c5111669 100644
+--- a/clang/lib/Serialization/ASTCommon.cpp
++++ b/clang/lib/Serialization/ASTCommon.cpp
+@@ -409,6 +409,8 @@ bool serialization::isRedeclarableDeclKind(unsigned Kind) {
+   case Decl::UnresolvedUsingValue:
+   case Decl::IndirectField:
+   case Decl::Field:
++  case Decl::TraitRequirement:
++  case Decl::CXXMGConditionalMember:
+   case Decl::MSProperty:
+   case Decl::MSGuid:
+   case Decl::UnnamedGlobalConstant:
+diff --git a/clang/lib/StaticAnalyzer/Core/ExprEngine.cpp b/clang/lib/StaticAnalyzer/Core/ExprEngine.cpp
+index 32da5e097c76..81f1f0b504f3 100644
+--- a/clang/lib/StaticAnalyzer/Core/ExprEngine.cpp
++++ b/clang/lib/StaticAnalyzer/Core/ExprEngine.cpp
+@@ -1911,6 +1911,8 @@ void ExprEngine::Visit(const Stmt *S, ExplodedNode *Pred,
+     case Stmt::ConceptSpecializationExprClass:
+     case Stmt::CXXRewrittenBinaryOperatorClass:
+     case Stmt::RequiresExprClass:
++    case Stmt::CXXMGTypeCheckExprClass:
++    case Stmt::CXXMGImplementsExprClass:
+     case Stmt::EmbedExprClass:
+       // Fall through.
+ 
+diff --git a/clang/lib/UnifiedSymbolResolution/USRGeneration.cpp b/clang/lib/UnifiedSymbolResolution/USRGeneration.cpp
+index c4788dd6917f..cf4bd7b2459a 100644
+--- a/clang/lib/UnifiedSymbolResolution/USRGeneration.cpp
++++ b/clang/lib/UnifiedSymbolResolution/USRGeneration.cpp
+@@ -534,6 +534,9 @@ void USRGenerator::VisitTagDecl(const TagDecl *D) {
+       case TagTypeKind::Struct:
+         Out << "@ST";
+         break;
++      case TagTypeKind::Trait:
++        Out << "@TT";
++        break;
+       case TagTypeKind::Union:
+         Out << "@UT";
+         break;
+@@ -552,6 +555,9 @@ void USRGenerator::VisitTagDecl(const TagDecl *D) {
+       case TagTypeKind::Struct:
+         Out << "@SP";
+         break;
++      case TagTypeKind::Trait:
++        Out << "@TP";
++        break;
+       case TagTypeKind::Union:
+         Out << "@UP";
+         break;
+@@ -569,6 +575,9 @@ void USRGenerator::VisitTagDecl(const TagDecl *D) {
+     case TagTypeKind::Struct:
+       Out << "@S";
+       break;
++    case TagTypeKind::Trait:
++      Out << "@T";
++      break;
+     case TagTypeKind::Union:
+       Out << "@U";
+       break;
+-- 
+2.54.0
+
