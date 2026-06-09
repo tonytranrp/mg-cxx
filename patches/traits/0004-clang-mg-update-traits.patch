@@ -5,13 +5,21 @@ Subject: [PATCH 4/7] clang-mg: update traits
 
 
 diff --git a/clang/lib/Parse/ParseDeclCXXMG.cpp b/clang/lib/Parse/ParseDeclCXXMG.cpp
-index 20cd1d4a1d42..52eff5ac6c93 100644
---- a/clang/lib/Parse/ParseDeclCXXMG.cpp
+new file mode 100644
+index 000000000000..5e73aa39d70e
+--- /dev/null
 +++ b/clang/lib/Parse/ParseDeclCXXMG.cpp
-@@ -132,3 +132,67 @@ SourceRange Parser::ParseCXXMGConditionalMemberBody(AccessSpecifier &AS,
-     RBraceLoc = ConsumeBrace();
-   return SourceRange(LBraceLoc, RBraceLoc);
- }
+@@ -0,0 +1,74 @@
++//===--- ParseDeclCXXMG.cpp - C++MG Declaration Parsing -------------*- C++MG -*-===//
++//
++//  This file implements the C++MG Declaration portions of the Parser interfaces.
++//
++//===----------------------------------------------------------------------===//
++
++#include "clang/Parse/Parser.h"
++#include "clang/AST/DeclCXX.h"
++#include "clang/AST/DeclTemplate.h"
++#include "clang/Parse/RAIIObjectsForParser.h"
 +
 +using namespace clang;
 +
