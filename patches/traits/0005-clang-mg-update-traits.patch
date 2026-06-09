@@ -5,7 +5,7 @@ Subject: [PATCH 5/7] clang-mg: update traits
 
 
 diff --git a/clang/lib/Parse/ParseDeclCXXMG.cpp b/clang/lib/Parse/ParseDeclCXXMG.cpp
-index 5e73aa39d70e..866734c8e472 100644
+index 52eff5ac6c93..42d80ab8bef3 100644
 --- a/clang/lib/Parse/ParseDeclCXXMG.cpp
 +++ b/clang/lib/Parse/ParseDeclCXXMG.cpp
 @@ -4,6 +4,7 @@

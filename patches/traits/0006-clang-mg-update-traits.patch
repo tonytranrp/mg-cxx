@@ -86,7 +86,7 @@ index 000000000000..ea1c89e8bcb7
 +
 +#endif
 diff --git a/clang/include/clang/AST/RecursiveASTVisitor.h b/clang/include/clang/AST/RecursiveASTVisitor.h
-index c642e9bd8ee4..c9458b5bd418 100644
+index 6380212cbd26..a5b91503d27b 100644
 --- a/clang/include/clang/AST/RecursiveASTVisitor.h
 +++ b/clang/include/clang/AST/RecursiveASTVisitor.h
 @@ -26,6 +26,7 @@
@@ -97,7 +97,7 @@ index c642e9bd8ee4..c9458b5bd418 100644
  #include "clang/AST/ExprConcepts.h"
  #include "clang/AST/ExprObjC.h"
  #include "clang/AST/ExprOpenMP.h"
-@@ -2859,6 +2860,13 @@ DEF_TRAVERSE_STMT(TypeTraitExpr, {
+@@ -2869,6 +2870,13 @@ DEF_TRAVERSE_STMT(TypeTraitExpr, {
      TRY_TO(TraverseTypeLoc(S->getArg(I)->getTypeLoc()));
  })
  
@@ -204,10 +204,10 @@ index aec5d827ae11..0d7bf62fded9 100644
  KEYWORD(try                         , KEYCXX)
  KEYWORD(typename                    , KEYCXX)
 diff --git a/clang/include/clang/Parse/Parser.h b/clang/include/clang/Parse/Parser.h
-index 242be4c6097a..73726c166bd6 100644
+index 25d66866ca21..99085ea9769a 100644
 --- a/clang/include/clang/Parse/Parser.h
 +++ b/clang/include/clang/Parse/Parser.h
-@@ -3546,6 +3546,10 @@ private:
+@@ -3559,6 +3559,10 @@ private:
  
    DeclGroupPtrTy ParseCXXMGTraitMemberDeclaration(
      AccessSpecifier &AS, ParsedAttributes &AccessAttrs, Decl *Tag);
@@ -219,10 +219,10 @@ index 242be4c6097a..73726c166bd6 100644
    /// ParseConstructorInitializer - Parse a C++ constructor initializer,
    /// which explicitly initializes the members or base classes of a
 diff --git a/clang/include/clang/Sema/Sema.h b/clang/include/clang/Sema/Sema.h
-index f47301deb6f4..82ed9988a72f 100644
+index c8da6ffcb11c..aed2289a9828 100644
 --- a/clang/include/clang/Sema/Sema.h
 +++ b/clang/include/clang/Sema/Sema.h
-@@ -5860,6 +5860,15 @@ public:
+@@ -5883,6 +5883,15 @@ public:
        TypeSourceInfo *FunctionTypeInfo);
    void ActOnCXXMGTraitMemberDeclaration(Decl *TraitDecl, DeclGroupPtrTy DG);
  
@@ -402,14 +402,13 @@ index 04875767b3c9..aba4eca6ccb3 100644
    OS << " " << getTraitSpelling(Node->getTrait());
  }
 diff --git a/clang/lib/Parse/CMakeLists.txt b/clang/lib/Parse/CMakeLists.txt
-index 8dd120f529b1..eb648d905297 100644
+index 07169bfc9129..eb648d905297 100644
 --- a/clang/lib/Parse/CMakeLists.txt
 +++ b/clang/lib/Parse/CMakeLists.txt
-@@ -12,6 +12,8 @@ add_clang_library(clangParse
-   ParseCXXInlineMethods.cpp
+@@ -13,6 +13,7 @@ add_clang_library(clangParse
    ParseDecl.cpp
    ParseDeclCXX.cpp
-+  ParseDeclCXXMG.cpp
+   ParseDeclCXXMG.cpp
 +  ParseCXXMGTraitExpr.cpp
    ParseExpr.cpp
    ParseExprCXX.cpp
