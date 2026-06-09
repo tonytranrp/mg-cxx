@@ -1,0 +1,274 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Mike <michaelgorney4@gmail.com>
+Date: Tue, 9 Jun 2026 18:51:39 -0400
+Subject: [PATCH] Remove "implements" from type expression parsing, keep only
+ in traits
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Updates the handling of C++MG type expressions, primarily focusing on separ[5D[K
+separating out 'implements' logic.
+This includes cleaning up unused diagnostic definitions and updating parser[6D[K
+parser helper functions in Parser.cpp/h.
+The semantic information for the `Implements` opcode is also removed from S[1D[K
+Sema, as its usage was superseded by new predicate logic.
+
+diff --git a/clang/include/clang/Basic/DiagnosticParseKinds.td b/clang/include/clang/Basic/DiagnosticParseKinds.td
+index f02ff4e7ad3b..1d20df1a8b8c 100644
+--- a/clang/include/clang/Basic/DiagnosticParseKinds.td
++++ b/clang/include/clang/Basic/DiagnosticParseKinds.td
+@@ -1878,10 +1878,6 @@ def err_cxxmg_type_expr_invalid_operator_alias :
+   Error<"operator %0 does not produce a type in a type alias expression">;
+ def err_cxxmg_type_expr_invalid_operator_predicate :
+   Error<"operator %0 is not supported in a type predicate expression">;
+-def err_cxxmg_expected_type_after_implements :
+-  Error<"expected type expression after C++MG 'implements' operator">;
+-def err_cxxmg_expected_type_before_implements :
+-  Error<"expected type expression before C++MG 'implements' operator">;
+ def err_cxxmg_implements_not_type_expression :
+   Error<"C++MG 'implements' predicate produces 'bool' and cannot be used as a type expression">;
+ }
+diff --git a/clang/include/clang/Parse/Parser.h b/clang/include/clang/Parse/Parser.h
+index 8cd42a81c8fc..acd45a016768 100644
+--- a/clang/include/clang/Parse/Parser.h
++++ b/clang/include/clang/Parse/Parser.h
+@@ -3362,7 +3362,6 @@ private:
+                                  bool AllowTypeNameFallback = true);
+   bool ParseCXXMGTypeExprRHS(ParsedCXXMGTypeExpr &LHS, prec::Level MinPrec,
+                              bool AllowTypeNameFallback = true);
+-  ExprResult TryParseCXXMGImplementsExpression();
+ 
+   /// ParseStaticAssertDeclaration - Parse C++0x or C11
+   /// static_assert-declaration.
+@@ -3574,6 +3573,8 @@ private:
+                                        bool AllowTypeNameFallback = true);
+   ExprResult TryParseCXXMGImplementsExpression();
+ 
++  ExprResult TryParseCXXMGTypePredicateExpression();
++
+   /// ParseConstructorInitializer - Parse a C++ constructor initializer,
+   /// which explicitly initializes the members or base classes of a
+   /// class (C++ [class.base.init]). For example, the three initializers
+diff --git a/clang/include/clang/Sema/Sema.h b/clang/include/clang/Sema/Sema.h
+index 616981cf2608..00293e2f0c78 100644
+--- a/clang/include/clang/Sema/Sema.h
++++ b/clang/include/clang/Sema/Sema.h
+@@ -200,8 +200,7 @@ class VisibleDeclConsumer;
+ 
+ enum class ParsedCXXMGTypeExprOpcode : unsigned {
+   Add,
+-  Sub,
+-  Implements,
++  Sub
+ };
+ 
+ struct ParsedCXXMGTypeExpr {
+diff --git a/clang/lib/Parse/ParseCXXMGTraitExpr.cpp b/clang/lib/Parse/ParseCXXMGTraitExpr.cpp
+index 92a89ed93020..d6ddab35f7b5 100644
+--- a/clang/lib/Parse/ParseCXXMGTraitExpr.cpp
++++ b/clang/lib/Parse/ParseCXXMGTraitExpr.cpp
+@@ -17,6 +17,10 @@ static bool isCXXMGImplementsFollowOperator(Parser &P) {
+           P.GetLookAheadToken(2).is(tok::greater));
+ }
+ 
++static bool isCXXMGImplementsOperator(Parser &P) {
++  return P.getCurToken().is(tok::kw_implements) || isCXXMGAngleImplements(P);
++}
++
+ static bool mayStartQualifiedCXXMGImplementsExpression(Parser &P) {
+   unsigned I = 0;
+   if (P.GetLookAheadToken(I).is(tok::coloncolon))
+diff --git a/clang/lib/Parse/ParseCXXMGTypeExpr.cpp b/clang/lib/Parse/ParseCXXMGTypeExpr.cpp
+index e4ed42e2b5f1..261d516b409b 100644
+--- a/clang/lib/Parse/ParseCXXMGTypeExpr.cpp
++++ b/clang/lib/Parse/ParseCXXMGTypeExpr.cpp
+@@ -11,12 +11,28 @@
+ 
+ using namespace clang;
+ 
+-static bool isCXXMGAngleImplements(Parser &P) {
+-  return P.getCurToken().is(tok::less) && P.NextToken().is(tok::greater);
+-}
++static bool mayStartCXXMGTypePredicate(Parser &P) {
++  tok::TokenKind K = P.getCurToken().getKind();
++  if (K == tok::annot_typename || K == tok::kw_typename ||
++      K == tok::kw_decltype || K == tok::kw_struct || K == tok::kw_class ||
++      K == tok::kw_trait)
++    return true;
++
++  if (K == tok::identifier) {
++    tok::TokenKind Next = P.NextToken().getKind();
++    return Next == tok::plus || Next == tok::minus || Next == tok::ampamp ||
++           Next == tok::pipepipe;
++  }
++
++  if (K == tok::l_paren) {
++    tok::TokenKind First = P.GetLookAheadToken(1).getKind();
++    tok::TokenKind Second = P.GetLookAheadToken(2).getKind();
++    return First == tok::identifier &&
++           (Second == tok::plus || Second == tok::minus ||
++            Second == tok::ampamp || Second == tok::pipepipe);
++  }
+ 
+-static bool isCXXMGImplementsOperator(Parser &P) {
+-  return P.getCurToken().is(tok::kw_implements) || isCXXMGAngleImplements(P);
++  return false;
+ }
+ 
+ static bool isCXXMGTypeExprPrimaryFollowOperator(Parser &P) {
+@@ -25,44 +41,6 @@ static bool isCXXMGTypeExprPrimaryFollowOperator(Parser &P) {
+           P.GetLookAheadToken(2).is(tok::greater));
+ }
+ 
+-static bool mayStartQualifiedCXXMGImplementsExpression(Parser &P) {
+-  unsigned I = 0;
+-
+-  if (P.GetLookAheadToken(I).is(tok::coloncolon))
+-    ++I;
+-
+-  if (!P.GetLookAheadToken(I).is(tok::identifier))
+-    return false;
+-
+-  ++I;
+-
+-  while (P.GetLookAheadToken(I).is(tok::coloncolon) &&
+-         P.GetLookAheadToken(I + 1).is(tok::identifier)) {
+-    I += 2;
+-  }
+-
+-  if (P.GetLookAheadToken(I).isOneOf(tok::plus, tok::minus,
+-                                     tok::kw_implements))
+-    return true;
+-
+-  return P.GetLookAheadToken(I).is(tok::less) &&
+-         P.GetLookAheadToken(I + 1).is(tok::greater);
+-}
+-
+-static bool mayStartCXXMGImplementsExpression(Parser &P) {
+-  if (!P.getLangOpts().CPlusPlusMG)
+-    return false;
+-
+-  tok::TokenKind K = P.getCurToken().getKind();
+-  if (K == tok::annot_typename || K == tok::l_paren)
+-    return true;
+-
+-  if (K == tok::identifier || K == tok::coloncolon)
+-    return mayStartQualifiedCXXMGImplementsExpression(P);
+-
+-  return false;
+-}
+-
+ bool Parser::isCXXMGTypeCompositionOperator(tok::TokenKind K) const {
+   return K == tok::plus || K == tok::minus;
+ }
+@@ -227,91 +205,12 @@ bool Parser::TryParseCXXMGTypeExpression(ParsedCXXMGTypeExpr &Out,
+   if (!ParseCXXMGTypeExprRHS(Out, prec::Unknown, AllowTypeNameFallback))
+     return false;
+ 
+-  if (RequireTypeProducingResult && isCXXMGImplementsOperator(*this)) {
+-    Diag(Tok.getLocation(), diag::err_cxxmg_implements_not_type_expression);
+-    return false;
+-  }
+-
+   return true;
+ }
+ 
+-ExprResult Parser::TryParseCXXMGImplementsExpression() {
++ExprResult Parser::TryParseCXXMGTypePredicateExpression() {
+   if (!getLangOpts().CPlusPlusMG)
+     return ExprEmpty();
+ 
+-  if (!mayStartCXXMGImplementsExpression(*this))
+-    return ExprEmpty();
+-
+-  if (Tok.is(tok::l_paren)) {
+-    TentativeParsingAction TPA(*this);
+-    ConsumeParen();
+-
+-    ExprResult Inner = TryParseCXXMGImplementsExpression();
+-    if (!Inner.isUsable() || Tok.isNot(tok::r_paren)) {
+-      TPA.Revert();
+-      return ExprEmpty();
+-    }
+-
+-    ConsumeParen();
+-    TPA.Commit();
+-    return Inner;
+-  }
+-
+-  TentativeParsingAction TPA(*this);
+-  ParsedCXXMGTypeExpr LHS;
+-  if (!TryParseCXXMGTypeExpression(LHS,
+-                                   /*RequireTypeProducingResult=*/false,
+-                                   /*AllowTypeNameFallback=*/false)) {
+-    TPA.Revert();
+-    return ExprEmpty();
+-  }
+-
+-  SourceLocation OpLoc;
+-  SourceLocation OpEndLoc;
+-  bool UsesAngleImplements = false;
+-
+-  if (Tok.is(tok::kw_implements)) {
+-    OpLoc = ConsumeToken();
+-    OpEndLoc = OpLoc;
+-  } else if (Tok.is(tok::less) && NextToken().is(tok::greater)) {
+-    OpLoc = ConsumeToken();
+-    OpEndLoc = ConsumeToken();
+-    UsesAngleImplements = true;
+-  } else {
+-    TPA.Revert();
+-    return ExprEmpty();
+-  }
+-
+-  if (Tok.isOneOf(tok::semi, tok::comma, tok::r_paren, tok::eof)) {
+-    TPA.Commit();
+-    Diag(Tok.getLocation(), diag::err_cxxmg_expected_type_after_implements);
+-    return ExprError();
+-  }
+-
+-  ParsedCXXMGTypeExpr RHS;
+-  if (!TryParseCXXMGTypeExpression(RHS,
+-                                   /*RequireTypeProducingResult=*/false,
+-                                   /*AllowTypeNameFallback=*/true)) {
+-    TPA.Commit();
+-    Diag(Tok.getLocation(), diag::err_cxxmg_expected_type_after_implements);
+-    return ExprError();
+-  }
+-
+-  TPA.Commit();
+-
+-  ParsedCXXMGTypeExpr TE;
+-  TE.K = ParsedCXXMGTypeExpr::Binary;
+-  TE.Op = ParsedCXXMGTypeExprOpcode::Implements;
+-  TE.OpLoc = OpLoc;
+-  TE.OpEndLoc = OpEndLoc;
+-  TE.UsesAngleImplements = UsesAngleImplements;
+-  TE.BeginLoc = LHS.BeginLoc;
+-  TE.EndLoc = RHS.EndLoc;
+-  TE.SawTypeExprOperator = true;
+-  TE.LHS = std::make_unique<ParsedCXXMGTypeExpr>(std::move(LHS));
+-  TE.RHS = std::make_unique<ParsedCXXMGTypeExpr>(std::move(RHS));
+-
+-  EnterExpressionEvaluationContext Unevaluated(
+-      Actions, Sema::ExpressionEvaluationContext::Unevaluated);
+-  return Actions.ActOnCXXMGTypePredicateExpression(getCurScope(), TE);
++  return ExprEmpty();
+ }
+diff --git a/clang/lib/Sema/SemaCXXMGTypeExpr.cpp b/clang/lib/Sema/SemaCXXMGTypeExpr.cpp
+index d5492a934d10..1c21f5ab52e0 100644
+--- a/clang/lib/Sema/SemaCXXMGTypeExpr.cpp
++++ b/clang/lib/Sema/SemaCXXMGTypeExpr.cpp
+@@ -71,8 +71,6 @@ translateParsedCXXMGOpcode(ParsedCXXMGTypeExprOpcode Op) {
+     return CXXMGTypeExprOpcode::Add;
+   case ParsedCXXMGTypeExprOpcode::Sub:
+     return CXXMGTypeExprOpcode::Sub;
+-  case ParsedCXXMGTypeExprOpcode::Implements:
+-    return CXXMGTypeExprOpcode::Implements;
+   }
+   llvm_unreachable("not a C++MG type-expression operator");
+ }
+-- 
+2.54.0
+

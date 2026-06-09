@@ -18,10 +18,10 @@ index 01c524b7220f..9005b30c838b 100644
      return LangStandard::lang_hlsl202x;
    }
 diff --git a/clang/lib/Driver/ToolChains/Clang.cpp b/clang/lib/Driver/ToolChains/Clang.cpp
-index 5b1e86714d70..fd7b117fb3aa 100644
+index 3df3f65bf144..a5de770cfa7e 100644
 --- a/clang/lib/Driver/ToolChains/Clang.cpp
 +++ b/clang/lib/Driver/ToolChains/Clang.cpp
-@@ -7531,7 +7531,7 @@ void Clang::ConstructJob(Compilation &C, const JobAction &JA,
+@@ -7536,7 +7536,7 @@ void Clang::ConstructJob(Compilation &C, const JobAction &JA,
                               // TODO add c++23 and c++26 when MSVC supports it.
                               .Case("c++23preview", "-std=c++23")
                               .Case("c++latest", "-std=c++26")

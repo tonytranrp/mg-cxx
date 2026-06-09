@@ -79,7 +79,7 @@ index 914c8a6276c2..036886d51ae7 100644
  ///
  /// In the terminology of the C++ Standard, these are the (static and
 diff --git a/clang/include/clang/AST/RecursiveASTVisitor.h b/clang/include/clang/AST/RecursiveASTVisitor.h
-index 64cd19bcd58b..6380212cbd26 100644
+index 1949f8fc1db2..1d9b08dc08f2 100644
 --- a/clang/include/clang/AST/RecursiveASTVisitor.h
 +++ b/clang/include/clang/AST/RecursiveASTVisitor.h
 @@ -2502,6 +2502,7 @@ DEF_TRAVERSE_DECL(ParmVarDecl, {
@@ -141,7 +141,7 @@ index d4ddffc2c982..6cf5f9c3f25c 100644
 +def CXXMGConditionalMember : DeclNode<Decl>;
 +def TraitRequirement : DeclNode<Named>;
 diff --git a/clang/include/clang/Basic/DiagnosticParseKinds.td b/clang/include/clang/Basic/DiagnosticParseKinds.td
-index 7bcd1870a260..e1e16343e7bb 100644
+index 0dc7d0fbeac0..05cd0e37e0a8 100644
 --- a/clang/include/clang/Basic/DiagnosticParseKinds.td
 +++ b/clang/include/clang/Basic/DiagnosticParseKinds.td
 @@ -639,6 +639,10 @@ def err_expected_member_or_base_name : Error<
@@ -156,7 +156,7 @@ index 7bcd1870a260..e1e16343e7bb 100644
    "missing '}' at end of definition of %q0">;
  def note_missing_end_of_definition_before : Note<
 diff --git a/clang/include/clang/Basic/DiagnosticSemaKinds.td b/clang/include/clang/Basic/DiagnosticSemaKinds.td
-index d3e2d616a8b8..758861ffb26d 100644
+index c7af5038afad..a6cf2501bdfd 100644
 --- a/clang/include/clang/Basic/DiagnosticSemaKinds.td
 +++ b/clang/include/clang/Basic/DiagnosticSemaKinds.td
 @@ -7827,6 +7827,17 @@ def err_typecheck_pointer_arith_void_type : Error<
@@ -231,7 +231,7 @@ index f07d8ebb7503..aec5d827ae11 100644
  KEYWORD(try                         , KEYCXX)
  KEYWORD(typename                    , KEYCXX)
 diff --git a/clang/include/clang/Parse/Parser.h b/clang/include/clang/Parse/Parser.h
-index 088a698719e5..25d66866ca21 100644
+index f56118352096..09f951e97415 100644
 --- a/clang/include/clang/Parse/Parser.h
 +++ b/clang/include/clang/Parse/Parser.h
 @@ -3557,6 +3557,9 @@ private:

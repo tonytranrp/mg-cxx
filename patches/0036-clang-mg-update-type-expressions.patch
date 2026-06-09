@@ -1,0 +1,457 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Mike <michaelgorney4@gmail.com>
+Date: Sat, 30 May 2026 01:10:55 -0400
+Subject: [PATCH 09/12] clang-mg: update type-expressions
+
+
+diff --git a/clang/include/clang/AST/ExprCXXMG.h b/clang/include/clang/AST/ExprCXXMG.h
+index ea1c89e8bcb7..11bebd4173f4 100644
+--- a/clang/include/clang/AST/ExprCXXMG.h
++++ b/clang/include/clang/AST/ExprCXXMG.h
+@@ -3,6 +3,7 @@
+ #ifndef LLVM_CLANG_AST_EXPRCXXMG_H
+ #define LLVM_CLANG_AST_EXPRCXXMG_H
+ 
++#include "clang/AST/CXXMGTypeExpr.h"
+ #include "clang/AST/Expr.h"
+ 
+ namespace clang {
+@@ -70,6 +71,79 @@ public:
+   }
+ };
+ 
++class CXXMGTypeCheckExpr final : public Expr {
++  CXXMGTypeExprNode *ExprNode = nullptr;
++  bool HasKnownValue = false;
++  bool KnownValue = false;
++
++public:
++  // CXXMGTypeCheckExpr represents a C++MG structural type predicate.
++  //
++  // The expression always has type bool. If the underlying type-expression tree
++  // is dependent, the expression is value-/instantiation-dependent and has no
++  // cached value. Once Sema can evaluate the predicate, the expression stores
++  // the result in KnownValue and is no longer value-dependent. The constant
++  // evaluator must not recompute the predicate; it only consumes the cached
++  // value.
++  CXXMGTypeCheckExpr(QualType BoolTy, CXXMGTypeExprNode *ExprNode,
++                     ExprDependence Dependence, bool HasKnownValue = false,
++                     bool KnownValue = false)
++      : Expr(CXXMGTypeCheckExprClass, BoolTy, VK_PRValue, OK_Ordinary),
++        ExprNode(ExprNode), HasKnownValue(HasKnownValue),
++        KnownValue(KnownValue) {
++    setDependence(Dependence);
++  }
++
++  explicit CXXMGTypeCheckExpr(EmptyShell Empty)
++      : Expr(CXXMGTypeCheckExprClass, Empty) {}
++
++  static CXXMGTypeCheckExpr *Create(ASTContext &Ctx,
++                                    CXXMGTypeExprNode *ExprNode);
++  static CXXMGTypeCheckExpr *CreateResolved(ASTContext &Ctx,
++                                            CXXMGTypeExprNode *ExprNode,
++                                            bool Value);
++  static CXXMGTypeCheckExpr *CreateEmpty(ASTContext &Ctx);
++
++  CXXMGTypeExprNode *getTypeExprNode() const { return ExprNode; }
++  void setTypeExprNode(CXXMGTypeExprNode *Node) { ExprNode = Node; }
++
++  bool hasKnownValue() const { return HasKnownValue; }
++
++  bool getKnownValue() const {
++    assert(HasKnownValue && "CXXMGTypeCheckExpr has no known value");
++    return KnownValue;
++  }
++
++  void setKnownValue(bool Value) {
++    HasKnownValue = true;
++    KnownValue = Value;
++  }
++
++  void clearKnownValue() {
++    HasKnownValue = false;
++    KnownValue = false;
++  }
++
++  SourceLocation getBeginLoc() const LLVM_READONLY {
++    return ExprNode ? ExprNode->getBeginLoc() : SourceLocation();
++  }
++  SourceLocation getEndLoc() const LLVM_READONLY {
++    return ExprNode ? ExprNode->getEndLoc() : SourceLocation();
++  }
++  SourceLocation getExprLoc() const LLVM_READONLY { return getBeginLoc(); }
++
++  child_range children() {
++    return child_range(child_iterator(), child_iterator());
++  }
++  const_child_range children() const {
++    return const_child_range(const_child_iterator(), const_child_iterator());
++  }
++
++  static bool classof(const Stmt *T) {
++    return T->getStmtClass() == CXXMGTypeCheckExprClass;
++  }
++};
++
+ } // namespace clang
+ 
+ #endif
+diff --git a/clang/lib/AST/ASTImporter.cpp b/clang/lib/AST/ASTImporter.cpp
+index e5c717bc697d..bdb032937c3a 100644
+--- a/clang/lib/AST/ASTImporter.cpp
++++ b/clang/lib/AST/ASTImporter.cpp
+@@ -694,6 +694,7 @@ namespace clang {
+     ExpectedStmt VisitCXXNamedCastExpr(CXXNamedCastExpr *E);
+     ExpectedStmt VisitSubstNonTypeTemplateParmExpr(SubstNonTypeTemplateParmExpr *E);
+     ExpectedStmt VisitTypeTraitExpr(TypeTraitExpr *E);
++    ExpectedStmt VisitCXXMGTypeCheckExpr(CXXMGTypeCheckExpr *E);
+     ExpectedStmt VisitCXXTypeidExpr(CXXTypeidExpr *E);
+     ExpectedStmt VisitCXXFoldExpr(CXXFoldExpr *E);
+     ExpectedStmt VisitRequiresExpr(RequiresExpr* E);
+@@ -1721,8 +1722,6 @@ ASTNodeImporter::VisitCXXMGTypeExprType(const CXXMGTypeExprType *T) {
+   return Importer.getToContext().getCXXMGTypeExprType(*NodeOrErr);
+ }
+ 
+-/* ChatGPT brh but like might be on to smth idk check out later
+-// TODO: Not be a lazy ass
+ ExpectedStmt
+ ASTNodeImporter::VisitCXXMGTypeCheckExpr(CXXMGTypeCheckExpr *E) {
+   Expected<CXXMGTypeExprNode *> NodeOrErr =
+@@ -1731,9 +1730,12 @@ ASTNodeImporter::VisitCXXMGTypeCheckExpr(CXXMGTypeCheckExpr *E) {
+   if (!NodeOrErr)
+     return NodeOrErr.takeError();
+ 
++  if (E->hasKnownValue())
++    return CXXMGTypeCheckExpr::CreateResolved(Importer.getToContext(),
++                                              *NodeOrErr, E->getKnownValue());
++
+   return CXXMGTypeCheckExpr::Create(Importer.getToContext(), *NodeOrErr);
+ }
+-*/
+ 
+ ExpectedType ASTNodeImporter::VisitTypedefType(const TypedefType *T) {
+   Expected<TypedefNameDecl *> ToDeclOrErr = import(T->getDecl());
+diff --git a/clang/lib/AST/ASTStructuralEquivalence.cpp b/clang/lib/AST/ASTStructuralEquivalence.cpp
+index ca6577af26c2..b837efeaf512 100644
+--- a/clang/lib/AST/ASTStructuralEquivalence.cpp
++++ b/clang/lib/AST/ASTStructuralEquivalence.cpp
+@@ -408,7 +408,12 @@ class StmtComparer {
+ 
+   bool IsStmtEquivalent(const CXXMGTypeCheckExpr *E1,
+                       const CXXMGTypeCheckExpr *E2) {
+-    //TODO: Actually compare the expressions
++    if (E1->hasKnownValue() != E2->hasKnownValue())
++      return false;
++
++    if (E1->hasKnownValue() && E1->getKnownValue() != E2->getKnownValue())
++      return false;
++
+     return true;
+   }
+ 
+diff --git a/clang/lib/AST/Expr.cpp b/clang/lib/AST/Expr.cpp
+index d62de57f5859..24698fc0ec67 100644
+--- a/clang/lib/AST/Expr.cpp
++++ b/clang/lib/AST/Expr.cpp
+@@ -43,20 +43,35 @@
+ #include <optional>
+ using namespace clang;
+ 
++static ExprDependence
++computeCXXMGTypeCheckExprDependence(CXXMGTypeExprNode *ExprNode) {
++  ExprDependence D = ExprDependence::None;
++
++  if (!ExprNode)
++    return D;
++
++  if (ExprNode->containsUnexpandedParameterPack())
++    D |= ExprDependence::UnexpandedPack;
++
++  if (ExprNode->isDependent() || ExprNode->isInstantiationDependent())
++    D |= ExprDependence::ValueInstantiation;
++
++  return D;
++}
++
+ CXXMGTypeCheckExpr *CXXMGTypeCheckExpr::Create(ASTContext &Ctx,
+                                                CXXMGTypeExprNode *ExprNode) {
+-  ExprDependence D = ExprDependence::None;
+-  if (ExprNode) {
+-    if (ExprNode->isDependent())
+-      D |= ExprDependence::Type;
+-    if (ExprNode->isInstantiationDependent())
+-      D |= ExprDependence::Instantiation;
+-    if (ExprNode->containsUnexpandedParameterPack())
+-      D |= ExprDependence::UnexpandedPack;
+-    if (ExprNode->isDependent() || ExprNode->isInstantiationDependent())
+-      D |= ExprDependence::Value;
+-  }
+-  return new (Ctx) CXXMGTypeCheckExpr(Ctx.BoolTy, ExprNode, D);
++  return new (Ctx)
++      CXXMGTypeCheckExpr(Ctx.BoolTy, ExprNode,
++                         computeCXXMGTypeCheckExprDependence(ExprNode));
++}
++
++CXXMGTypeCheckExpr *
++CXXMGTypeCheckExpr::CreateResolved(ASTContext &Ctx,
++                                   CXXMGTypeExprNode *ExprNode, bool Value) {
++  return new (Ctx)
++      CXXMGTypeCheckExpr(Ctx.BoolTy, ExprNode, ExprDependence::None,
++                         /*HasKnownValue=*/true, Value);
+ }
+ 
+ CXXMGTypeCheckExpr *CXXMGTypeCheckExpr::CreateEmpty(ASTContext &Ctx) {
+diff --git a/clang/lib/AST/ExprConstant.cpp b/clang/lib/AST/ExprConstant.cpp
+index 1642c41a99a2..d52f94a22597 100644
+--- a/clang/lib/AST/ExprConstant.cpp
++++ b/clang/lib/AST/ExprConstant.cpp
+@@ -44,6 +44,7 @@
+ #include "clang/AST/CharUnits.h"
+ #include "clang/AST/CurrentSourceLocExprScope.h"
+ #include "clang/AST/Expr.h"
++#include "clang/AST/ExprCXXMG.h"
+ #include "clang/AST/InferAlloc.h"
+ #include "clang/AST/OSLog.h"
+ #include "clang/AST/OptionalDiagnostic.h"
+@@ -15570,6 +15571,16 @@ public:
+     return Success(E->getAPValue().getInt(), E);
+   }
+ 
++  bool VisitCXXMGTypeCheckExpr(const CXXMGTypeCheckExpr *E) {
++    if (!E->hasKnownValue())
++      return Error(E);
++
++    assert(!E->isValueDependent() &&
++           "known CXXMG type check should not be value-dependent");
++
++    return Success(E->getKnownValue(), E);
++  }
++
+   bool VisitArrayTypeTraitExpr(const ArrayTypeTraitExpr *E) {
+     return Success(E->getValue(), E);
+   }
+diff --git a/clang/lib/AST/StmtProfile.cpp b/clang/lib/AST/StmtProfile.cpp
+index 14d3af0696a2..328b0f9cca8e 100644
+--- a/clang/lib/AST/StmtProfile.cpp
++++ b/clang/lib/AST/StmtProfile.cpp
+@@ -2320,6 +2320,9 @@ void StmtProfiler::VisitCXXMGTypeExprNode(const CXXMGTypeExprNode *Node) {
+ void StmtProfiler::VisitCXXMGTypeCheckExpr(const CXXMGTypeCheckExpr *S) {
+   VisitExpr(S);
+   VisitCXXMGTypeExprNode(S->getTypeExprNode());
++  ID.AddBoolean(S->hasKnownValue());
++  if (S->hasKnownValue())
++    ID.AddBoolean(S->getKnownValue());
+ }
+ 
+ void StmtProfiler::VisitArrayTypeTraitExpr(const ArrayTypeTraitExpr *S) {
+diff --git a/clang/lib/AST/TextNodeDumper.cpp b/clang/lib/AST/TextNodeDumper.cpp
+index b7ed6bf49c6a..c930ac23f9eb 100644
+--- a/clang/lib/AST/TextNodeDumper.cpp
++++ b/clang/lib/AST/TextNodeDumper.cpp
+@@ -1844,8 +1844,10 @@ void TextNodeDumper::VisitCXXMGImplementsExpr(
+ }
+ 
+ void TextNodeDumper::VisitCXXMGTypeCheckExpr(const CXXMGTypeCheckExpr *Node) {
+-  if (Node->isValueDependent())
+-    OS << " value-dependent";
++  if (Node->hasKnownValue())
++    OS << " value " << (Node->getKnownValue() ? "true" : "false");
++  else
++    OS << " unresolved";
+   if (auto *TE = Node->getTypeExprNode(); TE && TE->isBinary())
+     OS << " '" << getCXXMGTypeExprOpcodeSpelling(TE->getOpcode()) << "'";
+ }
+diff --git a/clang/lib/Sema/SemaCXXMGTypeExpr.cpp b/clang/lib/Sema/SemaCXXMGTypeExpr.cpp
+index 9f5c0e899b9f..65a7e36c4641 100644
+--- a/clang/lib/Sema/SemaCXXMGTypeExpr.cpp
++++ b/clang/lib/Sema/SemaCXXMGTypeExpr.cpp
+@@ -838,8 +838,7 @@ ExprResult Sema::BuildCXXMGTypePredicateExpr(CXXMGTypeExprNode *TE) {
+   if (!Impl.evaluatePredicate(TE, Result))
+     return ExprError();
+ 
+-  return CXXBoolLiteralExpr::Create(Context, Result, Context.BoolTy,
+-                                    TE->getOperatorLoc());
++  return CXXMGTypeCheckExpr::CreateResolved(Context, TE, Result);
+ }
+ 
+ ExprResult Sema::ActOnCXXMGTypePredicateExpression(
+diff --git a/clang/lib/Sema/TreeTransform.h b/clang/lib/Sema/TreeTransform.h
+index 4a4fd99f3071..8eb334f69606 100644
+--- a/clang/lib/Sema/TreeTransform.h
++++ b/clang/lib/Sema/TreeTransform.h
+@@ -14804,7 +14804,21 @@ TreeTransform<Derived>::TransformCXXMGTypeCheckExpr(CXXMGTypeCheckExpr *E) {
+       getDerived().TransformCXXMGTypeExprNode(E->getTypeExprNode());
+   if (!NewNode)
+     return ExprError();
+-  return getSema().BuildCXXMGTypePredicateExpr(NewNode);
++  ExprResult R = getSema().BuildCXXMGTypePredicateExpr(NewNode);
++
++#ifndef NDEBUG
++  if (!R.isInvalid() && !NewNode->isDependent() &&
++      !NewNode->isInstantiationDependent()) {
++    auto *Check = dyn_cast<CXXMGTypeCheckExpr>(R.get());
++    assert(Check && "C++MG predicate should rebuild as CXXMGTypeCheckExpr");
++    assert(Check->hasKnownValue() &&
++           "non-dependent C++MG predicate should have known value");
++    assert(!Check->isValueDependent() &&
++           "known C++MG predicate should not be value-dependent");
++  }
++#endif
++
++  return R;
+ }
+ 
+ template<typename Derived>
+diff --git a/clang/lib/Serialization/ASTReaderStmt.cpp b/clang/lib/Serialization/ASTReaderStmt.cpp
+index a5c567e91f21..6a68a2d498f6 100644
+--- a/clang/lib/Serialization/ASTReaderStmt.cpp
++++ b/clang/lib/Serialization/ASTReaderStmt.cpp
+@@ -2234,6 +2234,11 @@ void ASTStmtReader::VisitCXXMGImplementsExpr(CXXMGImplementsExpr *E) {
+ void ASTStmtReader::VisitCXXMGTypeCheckExpr(CXXMGTypeCheckExpr *E) {
+   VisitExpr(E);
+   E->setTypeExprNode(Record.readCXXMGTypeExprNodeRef());
++  bool HasKnownValue = Record.readInt();
++  if (HasKnownValue)
++    E->setKnownValue(Record.readInt());
++  else
++    E->clearKnownValue();
+ }
+ 
+ void ASTStmtReader::VisitArrayTypeTraitExpr(ArrayTypeTraitExpr *E) {
+diff --git a/clang/lib/Serialization/ASTWriterStmt.cpp b/clang/lib/Serialization/ASTWriterStmt.cpp
+index de7a6c7ff9f8..2ac58f4894b6 100644
+--- a/clang/lib/Serialization/ASTWriterStmt.cpp
++++ b/clang/lib/Serialization/ASTWriterStmt.cpp
+@@ -2245,6 +2245,9 @@ void ASTStmtWriter::VisitCXXMGImplementsExpr(CXXMGImplementsExpr *E) {
+ void ASTStmtWriter::VisitCXXMGTypeCheckExpr(CXXMGTypeCheckExpr *E) {
+   VisitExpr(E);
+   Record.AddCXXMGTypeExprNode(E->getTypeExprNode());
++  Record.push_back(E->hasKnownValue());
++  if (E->hasKnownValue())
++    Record.push_back(E->getKnownValue());
+   Code = serialization::EXPR_CXXMG_TYPE_CHECK;
+ }
+ 
+diff --git a/clang/test/CXXMG/type-expressions/type-expr-ast-dump-dependent-predicate.cpp b/clang/test/CXXMG/type-expressions/type-expr-ast-dump-dependent-predicate.cpp
+index 3bb2ca5c67ac..ab6762860b12 100644
+--- a/clang/test/CXXMG/type-expressions/type-expr-ast-dump-dependent-predicate.cpp
++++ b/clang/test/CXXMG/type-expressions/type-expr-ast-dump-dependent-predicate.cpp
+@@ -8,4 +8,4 @@ template <class T>
+ constexpr bool hasValue = ValueTrait && T;
+ 
+ // CHECK: CXXMGTypeCheckExpr
+-// CHECK-SAME: value-dependent
++// CHECK-SAME: unresolved
+diff --git a/clang/test/CXXMG/type-expressions/type-predicate-constexpr.cpp b/clang/test/CXXMG/type-expressions/type-predicate-constexpr.cpp
+new file mode 100644
+index 000000000000..342842f64d1a
+--- /dev/null
++++ b/clang/test/CXXMG/type-expressions/type-predicate-constexpr.cpp
+@@ -0,0 +1,53 @@
++// RUN: %clang_cc1 -std=c++20 -fsyntax-only -verify %s
++// expected-no-diagnostics
++
++trait has_value {
++  int value;
++};
++
++struct with_value {
++  int value;
++};
++
++struct without_value {};
++
++constexpr bool direct_true = has_value && with_value;
++constexpr bool direct_false = has_value && without_value;
++
++static_assert(direct_true);
++static_assert(!direct_false);
++
++template <typename T>
++constexpr bool check_with_alias() {
++  using backend_t = T;
++  constexpr bool is_gen = has_value && backend_t;
++  return is_gen;
++}
++
++static_assert(check_with_alias<with_value>());
++static_assert(!check_with_alias<without_value>());
++
++template <typename T>
++int check_if_constexpr() {
++  using backend_t = T;
++  constexpr bool is_gen = has_value && backend_t;
++
++  if constexpr (is_gen) {
++    return 1;
++  } else {
++    return 0;
++  }
++}
++
++static_assert(check_if_constexpr<with_value>() == 1);
++static_assert(check_if_constexpr<without_value>() == 0);
++
++template <typename T>
++void check_static_local() {
++  using backend_t = T;
++  static constexpr bool is_gen = has_value && backend_t;
++  static_assert(is_gen == (has_value && T));
++}
++
++template void check_static_local<with_value>();
++template void check_static_local<without_value>();
+diff --git a/clang/test/CXXMG/type-expressions/type-predicate-known-value-ast-dump.cpp b/clang/test/CXXMG/type-expressions/type-predicate-known-value-ast-dump.cpp
+new file mode 100644
+index 000000000000..7e953da11cb8
+--- /dev/null
++++ b/clang/test/CXXMG/type-expressions/type-predicate-known-value-ast-dump.cpp
+@@ -0,0 +1,12 @@
++// RUN: %clang_cc1 -std=c++20 -ast-dump %s | FileCheck %s
++
++trait has_value {
++  int value;
++};
++
++struct without_value {};
++
++constexpr bool test_value = has_value && without_value;
++
++// CHECK: CXXMGTypeCheckExpr
++// CHECK: value false
+diff --git a/clang/test/CXXMG/type-expressions/type-predicate-static-local-constexpr.cpp b/clang/test/CXXMG/type-expressions/type-predicate-static-local-constexpr.cpp
+new file mode 100644
+index 000000000000..5480e6fcc4ba
+--- /dev/null
++++ b/clang/test/CXXMG/type-expressions/type-predicate-static-local-constexpr.cpp
+@@ -0,0 +1,27 @@
++// RUN: %clang_cc1 -std=c++20 -fsyntax-only -verify %s
++// expected-no-diagnostics
++
++trait generator {
++  void generate();
++};
++
++trait builder {
++  int build();
++};
++
++struct ninja_backend {
++  void generate();
++  int build();
++};
++
++struct empty_backend {};
++
++template <typename Backend>
++constexpr bool has_generator_static_local() {
++  using backend_t = Backend;
++  static constexpr bool is_gen = generator && backend_t;
++  return is_gen;
++}
++
++static_assert(has_generator_static_local<ninja_backend>());
++static_assert(!has_generator_static_local<empty_backend>());
+-- 
+2.54.0
+

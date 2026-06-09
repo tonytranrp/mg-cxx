@@ -1,0 +1,1342 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Mike <michaelgorney4@gmail.com>
+Date: Sat, 23 May 2026 21:31:20 -0400
+Subject: [PATCH 01/12] clang-mg: add type-expressions
+
+
+diff --git a/clang/include/clang/AST/RecursiveASTVisitor.h b/clang/include/clang/AST/RecursiveASTVisitor.h
+index 36d6f520b576..51365741cc12 100644
+--- a/clang/include/clang/AST/RecursiveASTVisitor.h
++++ b/clang/include/clang/AST/RecursiveASTVisitor.h
+@@ -2877,6 +2877,10 @@ DEF_TRAVERSE_STMT(CXXMGImplementsExpr, {
+     TRY_TO(TraverseTypeLoc(TSI->getTypeLoc()));
+ })
+ 
++DEF_TRAVERSE_STMT(CXXMGTypeCheckExpr, {
++  TRY_TO(TraverseCXXMGTypeExprNode(S->getTypeExprNode()));
++})
++
+ DEF_TRAVERSE_STMT(ArrayTypeTraitExpr, {
+   TRY_TO(TraverseTypeLoc(S->getQueriedTypeSourceInfo()->getTypeLoc()));
+ })
+diff --git a/clang/include/clang/AST/TextNodeDumper.h b/clang/include/clang/AST/TextNodeDumper.h
+index 88d6a8936550..a521b991440f 100644
+--- a/clang/include/clang/AST/TextNodeDumper.h
++++ b/clang/include/clang/AST/TextNodeDumper.h
+@@ -304,6 +304,7 @@ public:
+   void VisitCXXDeleteExpr(const CXXDeleteExpr *Node);
+   void VisitTypeTraitExpr(const TypeTraitExpr *Node);
+   void VisitCXXMGImplementsExpr(const CXXMGImplementsExpr *Node);
++  void VisitCXXMGTypeCheckExpr(const CXXMGTypeCheckExpr *Node);
+   void VisitArrayTypeTraitExpr(const ArrayTypeTraitExpr *Node);
+   void VisitExpressionTraitExpr(const ExpressionTraitExpr *Node);
+   void VisitCXXDefaultArgExpr(const CXXDefaultArgExpr *Node);
+diff --git a/clang/include/clang/Basic/DiagnosticGroups.td b/clang/include/clang/Basic/DiagnosticGroups.td
+index 8031f99419bd..f15bbf9dfb80 100644
+--- a/clang/include/clang/Basic/DiagnosticGroups.td
++++ b/clang/include/clang/Basic/DiagnosticGroups.td
+@@ -1966,5 +1966,8 @@ def TrivialAutoVarInit : DiagGroup<"trivial-auto-var-init">;
+ // A warning for options that enable a feature that is not yet complete
+ def ExperimentalOption : DiagGroup<"experimental-option">;
+ 
++def CXXMGTypeExpressionNoopSubtraction :
++  DiagGroup<"cxxmg-type-expression-noop-subtraction">;
++
+ // Warnings about unguarded usages of AMDGPU target specific constructs
+ def UnguardedBuiltinUsageAMDGPU : DiagGroup<"amdgpu-unguarded-builtin-usage">;
+diff --git a/clang/include/clang/Basic/DiagnosticParseKinds.td b/clang/include/clang/Basic/DiagnosticParseKinds.td
+index a69394abd2ad..d77f413c1a36 100644
+--- a/clang/include/clang/Basic/DiagnosticParseKinds.td
++++ b/clang/include/clang/Basic/DiagnosticParseKinds.td
+@@ -1873,6 +1873,13 @@ def err_cannot_reflect_operand : Error<
+   "unknown or unimplemented reflectable entity">;
+ }
+ 
++let CategoryName = "C++MG Issue" in {
++def err_cxxmg_type_expr_invalid_operator_alias :
++  Error<"operator %0 does not produce a type in a type alias expression">;
++def err_cxxmg_type_expr_invalid_operator_predicate :
++  Error<"operator %0 is not supported in a type predicate expression">;
++}
++
+ def warn_max_tokens : Warning<
+   "the number of preprocessor source tokens (%0) exceeds this token limit (%1)">,
+   InGroup<MaxTokens>, DefaultIgnore;
+diff --git a/clang/include/clang/Basic/DiagnosticSemaKinds.td b/clang/include/clang/Basic/DiagnosticSemaKinds.td
+index 6101226f2c85..e99237d429f4 100644
+--- a/clang/include/clang/Basic/DiagnosticSemaKinds.td
++++ b/clang/include/clang/Basic/DiagnosticSemaKinds.td
+@@ -14296,6 +14296,32 @@ def warn_comparison_in_enum_initializer : Warning<
+ def note_enum_compare_typo_suggest : Note<
+   "use '%0' to perform a bitwise shift">;
+ 
++let CategoryName = "C++MG Issue" in {
++def err_cxxmg_type_expr_requires_cxxmg :
++  Error<"type expressions are a C++MG extension">;
++def err_cxxmg_type_expr_expected_type_operand :
++  Error<"expected struct, class, trait, or alias operand in type expression">;
++def err_cxxmg_type_expr_invalid_operand :
++  Error<"type expression operand %0 is not a struct, class, or trait">;
++def err_cxxmg_type_expr_incomplete_operand :
++  Error<"type expression operand %0 is incomplete">;
++def err_cxxmg_type_expr_union_operand :
++  Error<"union type %0 cannot be used in a type expression">;
++def err_cxxmg_type_expr_invalid_operator_predicate_sema :
++  Error<"operator %0 is not supported in a type predicate expression">;
++def err_cxxmg_type_expr_conflicting_member :
++  Error<"conflicting member %0 in type expression result">;
++def note_cxxmg_type_expr_previous_member :
++  Note<"previous member declared here">;
++def err_cxxmg_type_expr_unsupported_member :
++  Error<"member %0 cannot be copied by a type expression yet">;
++def warn_cxxmg_type_expr_noop_subtraction :
++  Warning<"type-expression subtraction removed no members">,
++  InGroup<CXXMGTypeExpressionNoopSubtraction>, DefaultIgnore;
++def note_cxxmg_type_expr_in_result :
++  Note<"while forming result of type expression here">;
++}
++
+ def err_cuda_device_kernel_launch_not_supported
+     : Error<"device-side kernel call/launch is not supported">;
+ def err_cuda_device_kernel_launch_require_rdc
+diff --git a/clang/include/clang/Basic/Features.def b/clang/include/clang/Basic/Features.def
+index 71a79db381d6..3c43cb23b937 100644
+--- a/clang/include/clang/Basic/Features.def
++++ b/clang/include/clang/Basic/Features.def
+@@ -383,8 +383,8 @@ FEATURE(clang_atomic_attributes, true)
+ 
+ // C++MG features.
+ FEATURE(cxxmg_if_constexpr_members, LangOpts.CPlusPlus && LangOpts.CPlusPlusMG)
+-// C++MG Features
+ FEATURE(cxxmg_traits, LangOpts.CPlusPlus && LangOpts.CPlusPlusMG)
++FEATURE(cxxmg_type_expressions, LangOpts.CPlusPlus && LangOpts.CPlusPlusMG)
+ 
+ // CUDA/HIP Features
+ FEATURE(cuda_noinline_keyword, LangOpts.CUDA)
+diff --git a/clang/include/clang/Parse/Parser.h b/clang/include/clang/Parse/Parser.h
+index a678fde7f7f0..2e0400a7d285 100644
+--- a/clang/include/clang/Parse/Parser.h
++++ b/clang/include/clang/Parse/Parser.h
+@@ -3354,6 +3354,16 @@ private:
+       UsingDeclarator &D, SourceLocation &DeclEnd, AccessSpecifier AS,
+       ParsedAttributes &Attrs, Decl **OwnedType = nullptr);
+ 
++  bool isCXXMGTypeExprOperator(tok::TokenKind K,
++                               bool AllowPredicates) const;
++  bool TryParseCXXMGTypeExpression(ParsedCXXMGTypeExpr &Out,
++                                   bool AllowPredicates,
++                                   bool RequireTypeProducingResult);
++  bool ParseCXXMGTypeExprPrimary(ParsedCXXMGTypeExpr &Out);
++  bool ParseCXXMGTypeExprRHS(ParsedCXXMGTypeExpr &LHS, prec::Level MinPrec,
++                             bool AllowPredicates);
++  ExprResult TryParseCXXMGTypePredicateExpression();
++
+   /// ParseStaticAssertDeclaration - Parse C++0x or C11
+   /// static_assert-declaration.
+   ///
+diff --git a/clang/include/clang/Sema/Sema.h b/clang/include/clang/Sema/Sema.h
+index aed2289a9828..ea7ee3c9baf9 100644
+--- a/clang/include/clang/Sema/Sema.h
++++ b/clang/include/clang/Sema/Sema.h
+@@ -197,6 +197,21 @@ class UnresolvedSetImpl;
+ class UnresolvedSetIterator;
+ class VisibleDeclConsumer;
+ 
++struct ParsedCXXMGTypeExpr {
++  enum Kind { Operand, Binary };
++
++  Kind K = Operand;
++  ParsedType OperandType;
++  TypeSourceInfo *OperandTSI = nullptr;
++  tok::TokenKind Op = tok::unknown;
++  SourceLocation OpLoc;
++  std::unique_ptr<ParsedCXXMGTypeExpr> LHS;
++  std::unique_ptr<ParsedCXXMGTypeExpr> RHS;
++  SourceLocation BeginLoc;
++  SourceLocation EndLoc;
++  bool SawTypeExprOperator = false;
++};
++
+ namespace sema {
+ class BlockScopeInfo;
+ class Capture;
+@@ -5505,6 +5520,11 @@ public:
+                               SourceLocation UsingLoc, UnqualifiedId &Name,
+                               const ParsedAttributesView &AttrList,
+                               TypeResult Type, Decl *DeclFromDeclSpec);
++  TypeResult ActOnCXXMGTypeAliasExpression(
++      Scope *CurScope, AccessSpecifier AS, MultiTemplateParamsArg TemplateParams,
++      SourceLocation UsingLoc, UnqualifiedId &Name,
++      const ParsedAttributesView &AttrList, const ParsedCXXMGTypeExpr &TE,
++      Decl **DeclFromDeclSpec);
+ 
+   /// BuildCXXConstructExpr - Creates a complete call to a constructor,
+   /// including handling of its default argument expressions.
+@@ -5883,6 +5903,9 @@ public:
+       TypeSourceInfo *FunctionTypeInfo);
+   void ActOnCXXMGTraitMemberDeclaration(Decl *TraitDecl, DeclGroupPtrTy DG);
+ 
++  ExprResult ActOnCXXMGTypePredicateExpression(Scope *S,
++                                               const ParsedCXXMGTypeExpr &TE);
++
+   ExprResult ActOnCXXMGImplementsExpression(
+       Scope *S, TypeSourceInfo *CandidateTSI, SourceLocation OpLoc,
+       SourceLocation OpEndLoc, bool UsesAngleSyntax,
+diff --git a/clang/lib/AST/Expr.cpp b/clang/lib/AST/Expr.cpp
+index 02c33e539674..d62de57f5859 100644
+--- a/clang/lib/AST/Expr.cpp
++++ b/clang/lib/AST/Expr.cpp
+@@ -43,6 +43,26 @@
+ #include <optional>
+ using namespace clang;
+ 
++CXXMGTypeCheckExpr *CXXMGTypeCheckExpr::Create(ASTContext &Ctx,
++                                               CXXMGTypeExprNode *ExprNode) {
++  ExprDependence D = ExprDependence::None;
++  if (ExprNode) {
++    if (ExprNode->isDependent())
++      D |= ExprDependence::Type;
++    if (ExprNode->isInstantiationDependent())
++      D |= ExprDependence::Instantiation;
++    if (ExprNode->containsUnexpandedParameterPack())
++      D |= ExprDependence::UnexpandedPack;
++    if (ExprNode->isDependent() || ExprNode->isInstantiationDependent())
++      D |= ExprDependence::Value;
++  }
++  return new (Ctx) CXXMGTypeCheckExpr(Ctx.BoolTy, ExprNode, D);
++}
++
++CXXMGTypeCheckExpr *CXXMGTypeCheckExpr::CreateEmpty(ASTContext &Ctx) {
++  return new (Ctx) CXXMGTypeCheckExpr(EmptyShell());
++}
++
+ static ExprDependence
+ computeCXXMGImplementsExprDependence(TypeSourceInfo *CandidateTSI,
+                                       TypeSourceInfo *RequirementTSI) {
+diff --git a/clang/lib/AST/StmtPrinter.cpp b/clang/lib/AST/StmtPrinter.cpp
+index c9f2fd5d2618..8e7a53375f7a 100644
+--- a/clang/lib/AST/StmtPrinter.cpp
++++ b/clang/lib/AST/StmtPrinter.cpp
+@@ -2646,6 +2646,10 @@ void StmtPrinter::VisitCXXMGImplementsExpr(CXXMGImplementsExpr *E) {
+     TSI->getType().print(OS, Policy);
+ }
+ 
++void StmtPrinter::VisitCXXMGTypeCheckExpr(CXXMGTypeCheckExpr *E) {
++  printCXXMGTypeExprNode(E->getTypeExprNode(), OS, Policy);
++}
++
+ void StmtPrinter::VisitArrayTypeTraitExpr(ArrayTypeTraitExpr *E) {
+   OS << getTraitSpelling(E->getTrait()) << '(';
+   E->getQueriedType().print(OS, Policy);
+diff --git a/clang/lib/AST/StmtProfile.cpp b/clang/lib/AST/StmtProfile.cpp
+index f8597dc441df..994dcb6957ab 100644
+--- a/clang/lib/AST/StmtProfile.cpp
++++ b/clang/lib/AST/StmtProfile.cpp
+@@ -2304,6 +2304,22 @@ void StmtProfiler::VisitCXXMGImplementsExpr(const CXXMGImplementsExpr *S) {
+   ID.AddBoolean(S->usesAngleSyntax());
+ }
+ 
++void StmtProfiler::VisitCXXMGTypeExprNode(const CXXMGTypeExprNode *Node) {
++  ID.AddInteger(Node->getKind());
++  if (Node->isOperand()) {
++    VisitType(Node->getOperandTypeSourceInfo()->getType());
++    return;
++  }
++  ID.AddInteger(static_cast<unsigned>(Node->getOpcode()));
++  VisitCXXMGTypeExprNode(Node->getLHS());
++  VisitCXXMGTypeExprNode(Node->getRHS());
++}
++
++void StmtProfiler::VisitCXXMGTypeCheckExpr(const CXXMGTypeCheckExpr *S) {
++  VisitExpr(S);
++  VisitCXXMGTypeExprNode(S->getTypeExprNode());
++}
++
+ void StmtProfiler::VisitArrayTypeTraitExpr(const ArrayTypeTraitExpr *S) {
+   VisitExpr(S);
+   ID.AddInteger(S->getTrait());
+diff --git a/clang/lib/AST/TextNodeDumper.cpp b/clang/lib/AST/TextNodeDumper.cpp
+index aba4eca6ccb3..66a50d231895 100644
+--- a/clang/lib/AST/TextNodeDumper.cpp
++++ b/clang/lib/AST/TextNodeDumper.cpp
+@@ -1843,6 +1843,13 @@ void TextNodeDumper::VisitCXXMGImplementsExpr(
+     OS << " unresolved";
+ }
+ 
++void TextNodeDumper::VisitCXXMGTypeCheckExpr(const CXXMGTypeCheckExpr *Node) {
++  if (Node->isValueDependent())
++    OS << " value-dependent";
++  if (auto *TE = Node->getTypeExprNode(); TE && TE->isBinary())
++    OS << " '" << getCXXMGTypeExprOpcodeSpelling(TE->getOpcode()) << "'";
++}
++
+ void TextNodeDumper::VisitArrayTypeTraitExpr(const ArrayTypeTraitExpr *Node) {
+   OS << " " << getTraitSpelling(Node->getTrait());
+ }
+diff --git a/clang/lib/AST/Type.cpp b/clang/lib/AST/Type.cpp
+index cd1f3cd0ccc3..2c2ad0ed613f 100644
+--- a/clang/lib/AST/Type.cpp
++++ b/clang/lib/AST/Type.cpp
+@@ -15,6 +15,7 @@
+ #include "clang/AST/ASTContext.h"
+ #include "clang/AST/Attr.h"
+ #include "clang/AST/Attrs.inc"
++#include "clang/AST/CXXMGTypeExpr.h"
+ #include "clang/AST/CharUnits.h"
+ #include "clang/AST/Decl.h"
+ #include "clang/AST/DeclBase.h"
+diff --git a/clang/lib/Frontend/InitPreprocessor.cpp b/clang/lib/Frontend/InitPreprocessor.cpp
+index 8aa0faebe182..6656f2bd076c 100644
+--- a/clang/lib/Frontend/InitPreprocessor.cpp
++++ b/clang/lib/Frontend/InitPreprocessor.cpp
+@@ -759,6 +759,7 @@ static void InitializeCPlusPlusFeatureTestMacros(const LangOptions &LangOpts,
+   if (LangOpts.CPlusPlusMG) {
+     Builder.defineMacro("__cxxmg_if_constexpr_member", "202604L");
+     Builder.defineMacro("__cxxmg_traits", "202605L");
++    Builder.defineMacro("__cxxmg_type_expressions", "202605L");
+   }
+ }
+ 
+diff --git a/clang/lib/Parse/CMakeLists.txt b/clang/lib/Parse/CMakeLists.txt
+index eb648d905297..65304c11ca77 100644
+--- a/clang/lib/Parse/CMakeLists.txt
++++ b/clang/lib/Parse/CMakeLists.txt
+@@ -14,6 +14,7 @@ add_clang_library(clangParse
+   ParseDeclCXX.cpp
+   ParseDeclCXXMG.cpp
+   ParseCXXMGTraitExpr.cpp
++  ParseCXXMGTypeExpr.cpp
+   ParseExpr.cpp
+   ParseExprCXX.cpp
+   ParseHLSL.cpp
+diff --git a/clang/lib/Parse/ParseCXXMGTypeExpr.cpp b/clang/lib/Parse/ParseCXXMGTypeExpr.cpp
+new file mode 100644
+index 000000000000..d36514d82a1b
+--- /dev/null
++++ b/clang/lib/Parse/ParseCXXMGTypeExpr.cpp
+@@ -0,0 +1,213 @@
++//===--- ParseCXXMGTypeExpr.cpp - C++MG Type Expressions -----------------===//
++//
++//  This file implements parsing for C++MG structural type expressions.
++//
++//===----------------------------------------------------------------------===//
++
++#include "clang/Basic/DiagnosticParse.h"
++#include "clang/Parse/Parser.h"
++#include "clang/Parse/RAIIObjectsForParser.h"
++#include "clang/Sema/EnterExpressionEvaluationContext.h"
++
++using namespace clang;
++
++static const char *getCXXMGTypeExprOperatorSpelling(tok::TokenKind K) {
++  if (const char *Spelling = tok::getPunctuatorSpelling(K))
++    return Spelling;
++  return tok::getTokenName(K);
++}
++
++static bool mayStartCXXMGTypePredicate(Parser &P) {
++  tok::TokenKind K = P.getCurToken().getKind();
++  if (K == tok::annot_typename || K == tok::kw_typename ||
++      K == tok::kw_decltype || K == tok::kw_struct || K == tok::kw_class ||
++      K == tok::kw_trait)
++    return true;
++
++  if (K == tok::identifier) {
++    tok::TokenKind Next = P.NextToken().getKind();
++    return Next == tok::plus || Next == tok::minus || Next == tok::ampamp ||
++           Next == tok::pipepipe;
++  }
++
++  if (K == tok::l_paren) {
++    tok::TokenKind First = P.GetLookAheadToken(1).getKind();
++    tok::TokenKind Second = P.GetLookAheadToken(2).getKind();
++    return First == tok::identifier &&
++           (Second == tok::plus || Second == tok::minus ||
++            Second == tok::ampamp || Second == tok::pipepipe);
++  }
++
++  return false;
++}
++
++bool Parser::isCXXMGTypeExprOperator(tok::TokenKind K,
++                                     bool AllowPredicates) const {
++  if (K == tok::plus || K == tok::minus)
++    return true;
++  if (AllowPredicates && (K == tok::ampamp || K == tok::pipepipe))
++    return true;
++  return false;
++}
++
++bool Parser::ParseCXXMGTypeExprPrimary(ParsedCXXMGTypeExpr &Out) {
++  if (Tok.is(tok::identifier) &&
++      NextToken().isOneOf(tok::plus, tok::minus, tok::ampamp,
++                          tok::pipepipe)) {
++    SourceLocation NameLoc = Tok.getLocation();
++    IdentifierInfo *II = Tok.getIdentifierInfo();
++    ParsedType Ty = Actions.getTypeName(*II, NameLoc, getCurScope());
++    if (!Ty)
++      return false;
++    ConsumeToken();
++
++    TypeSourceInfo *TSI = nullptr;
++    QualType QT = Actions.GetTypeFromParser(Ty, &TSI);
++    if (QT.isNull())
++      return false;
++    if (!TSI)
++      TSI = Actions.getASTContext().getTrivialTypeSourceInfo(QT, NameLoc);
++
++    Out = ParsedCXXMGTypeExpr();
++    Out.K = ParsedCXXMGTypeExpr::Operand;
++    Out.OperandType = Ty;
++    Out.OperandTSI = TSI;
++    Out.BeginLoc = NameLoc;
++    Out.EndLoc = NameLoc;
++    return true;
++  }
++
++  if (Tok.is(tok::l_paren)) {
++    SourceLocation LParen = ConsumeParen();
++    ParsedCXXMGTypeExpr Inner;
++    if (!ParseCXXMGTypeExprPrimary(Inner))
++      return false;
++    if (!ParseCXXMGTypeExprRHS(Inner, prec::Unknown,
++                               /*AllowPredicates=*/true))
++      return false;
++    if (Tok.isNot(tok::r_paren))
++      return false;
++    Inner.BeginLoc = LParen;
++    Inner.EndLoc = ConsumeParen();
++    Out = std::move(Inner);
++    return true;
++  }
++
++  SourceLocation Begin = Tok.getLocation();
++  SourceRange Range;
++  TypeResult TR = ParseTypeName(&Range);
++  if (TR.isInvalid() || !TR.get())
++    return false;
++
++  TypeSourceInfo *TSI = nullptr;
++  QualType QT = Actions.GetTypeFromParser(TR.get(), &TSI);
++  if (QT.isNull())
++    return false;
++  if (!TSI)
++    TSI = Actions.getASTContext().getTrivialTypeSourceInfo(QT, Begin);
++
++  Out = ParsedCXXMGTypeExpr();
++  Out.K = ParsedCXXMGTypeExpr::Operand;
++  Out.OperandType = TR.get();
++  Out.OperandTSI = TSI;
++  Out.BeginLoc = Range.getBegin().isValid() ? Range.getBegin() : Begin;
++  Out.EndLoc = Range.getEnd().isValid() ? Range.getEnd() : Begin;
++  return true;
++}
++
++bool Parser::ParseCXXMGTypeExprRHS(ParsedCXXMGTypeExpr &LHS,
++                                   prec::Level MinPrec,
++                                   bool AllowPredicates) {
++  while (true) {
++    tok::TokenKind Op = Tok.getKind();
++    if (!isCXXMGTypeExprOperator(Op, AllowPredicates))
++      return true;
++
++    prec::Level OpPrec =
++        getBinOpPrecedence(Op, GreaterThanIsOperator, getLangOpts().CPlusPlus11);
++    if (OpPrec < MinPrec)
++      return true;
++
++    if (!AllowPredicates && (Op == tok::ampamp || Op == tok::pipepipe)) {
++      Diag(Tok.getLocation(), diag::err_cxxmg_type_expr_invalid_operator_alias)
++          << getCXXMGTypeExprOperatorSpelling(Op);
++      return false;
++    }
++
++    SourceLocation OpLoc = ConsumeToken();
++    ParsedCXXMGTypeExpr RHS;
++    if (!ParseCXXMGTypeExprPrimary(RHS))
++      return false;
++
++    tok::TokenKind NextOp = Tok.getKind();
++    prec::Level NextPrec = isCXXMGTypeExprOperator(NextOp, AllowPredicates)
++                               ? getBinOpPrecedence(NextOp,
++                                                    GreaterThanIsOperator,
++                                                    getLangOpts().CPlusPlus11)
++                               : prec::Unknown;
++    if (NextPrec > OpPrec &&
++        !ParseCXXMGTypeExprRHS(RHS, static_cast<prec::Level>(OpPrec + 1),
++                               AllowPredicates))
++      return false;
++
++    auto Node = std::make_unique<ParsedCXXMGTypeExpr>();
++    Node->K = ParsedCXXMGTypeExpr::Binary;
++    Node->Op = Op;
++    Node->OpLoc = OpLoc;
++    Node->BeginLoc = LHS.BeginLoc;
++    Node->EndLoc = RHS.EndLoc;
++    Node->SawTypeExprOperator = true;
++    Node->LHS = std::make_unique<ParsedCXXMGTypeExpr>(std::move(LHS));
++    Node->RHS = std::make_unique<ParsedCXXMGTypeExpr>(std::move(RHS));
++    LHS = std::move(*Node);
++  }
++}
++
++bool Parser::TryParseCXXMGTypeExpression(ParsedCXXMGTypeExpr &Out,
++                                         bool AllowPredicates,
++                                         bool RequireTypeProducingResult) {
++  if (!getLangOpts().CPlusPlusMG)
++    return false;
++
++  if (!ParseCXXMGTypeExprPrimary(Out))
++    return false;
++  if (!ParseCXXMGTypeExprRHS(Out, prec::Unknown, AllowPredicates))
++    return false;
++
++  if (RequireTypeProducingResult && Out.K == ParsedCXXMGTypeExpr::Binary &&
++      (Out.Op == tok::ampamp || Out.Op == tok::pipepipe)) {
++    Diag(Out.OpLoc, diag::err_cxxmg_type_expr_invalid_operator_alias)
++        << getCXXMGTypeExprOperatorSpelling(Out.Op);
++    return false;
++  }
++
++  return true;
++}
++
++ExprResult Parser::TryParseCXXMGTypePredicateExpression() {
++  if (!getLangOpts().CPlusPlusMG)
++    return ExprEmpty();
++
++  if (!mayStartCXXMGTypePredicate(*this))
++    return ExprEmpty();
++
++  TentativeParsingAction TPA(*this);
++  ParsedCXXMGTypeExpr TE;
++  if (!TryParseCXXMGTypeExpression(TE, /*AllowPredicates=*/true,
++                                   /*RequireTypeProducingResult=*/false) ||
++      !TE.SawTypeExprOperator) {
++    TPA.Revert();
++    return ExprEmpty();
++  }
++
++  if (TE.K != ParsedCXXMGTypeExpr::Binary ||
++      (TE.Op != tok::ampamp && TE.Op != tok::pipepipe)) {
++    TPA.Revert();
++    return ExprEmpty();
++  }
++
++  TPA.Commit();
++  EnterExpressionEvaluationContext Unevaluated(
++      Actions, Sema::ExpressionEvaluationContext::Unevaluated);
++  return Actions.ActOnCXXMGTypePredicateExpression(getCurScope(), TE);
++}
+diff --git a/clang/lib/Parse/ParseDeclCXX.cpp b/clang/lib/Parse/ParseDeclCXX.cpp
+index c5fddf941e0f..e2301e501419 100644
+--- a/clang/lib/Parse/ParseDeclCXX.cpp
++++ b/clang/lib/Parse/ParseDeclCXX.cpp
+@@ -889,11 +889,38 @@ Decl *Parser::ParseAliasDeclarationAfterDeclarator(
+         << FixItHint::CreateRemoval(SourceRange(D.EllipsisLoc));
+ 
+   Decl *DeclFromDeclSpec = nullptr;
+-  TypeResult TypeAlias =
+-      ParseTypeName(nullptr,
+-                    TemplateInfo.Kind != ParsedTemplateKind::NonTemplate ? DeclaratorContext::AliasTemplate
+-                                      : DeclaratorContext::AliasDecl,
+-                    AS, &DeclFromDeclSpec, &Attrs);
++  TypeResult TypeAlias;
++  if (getLangOpts().CPlusPlusMG) {
++    TentativeParsingAction TPA(*this);
++    ParsedCXXMGTypeExpr TE;
++    bool ParsedTE = TryParseCXXMGTypeExpression(
++        TE, /*AllowPredicates=*/false, /*RequireTypeProducingResult=*/true);
++    if (ParsedTE && TE.SawTypeExprOperator && Tok.is(tok::semi)) {
++      TPA.Commit();
++      TemplateParameterLists *TemplateParams = TemplateInfo.TemplateParams;
++      MultiTemplateParamsArg TemplateParamsArg(
++          TemplateParams ? TemplateParams->data() : nullptr,
++          TemplateParams ? TemplateParams->size() : 0);
++      TypeAlias = Actions.ActOnCXXMGTypeAliasExpression(
++          getCurScope(), AS, TemplateParamsArg, UsingLoc, D.Name, Attrs, TE,
++          &DeclFromDeclSpec);
++    } else {
++      TPA.Revert();
++      TypeAlias = ParseTypeName(
++          nullptr,
++          TemplateInfo.Kind != ParsedTemplateKind::NonTemplate
++              ? DeclaratorContext::AliasTemplate
++              : DeclaratorContext::AliasDecl,
++          AS, &DeclFromDeclSpec, &Attrs);
++    }
++  } else {
++    TypeAlias = ParseTypeName(
++        nullptr,
++        TemplateInfo.Kind != ParsedTemplateKind::NonTemplate
++            ? DeclaratorContext::AliasTemplate
++            : DeclaratorContext::AliasDecl,
++        AS, &DeclFromDeclSpec, &Attrs);
++  }
+   if (OwnedType)
+     *OwnedType = DeclFromDeclSpec;
+ 
+diff --git a/clang/lib/Parse/ParseExpr.cpp b/clang/lib/Parse/ParseExpr.cpp
+index b5fe0558b38a..60d60f8d3ccf 100644
+--- a/clang/lib/Parse/ParseExpr.cpp
++++ b/clang/lib/Parse/ParseExpr.cpp
+@@ -86,6 +86,12 @@ ExprResult Parser::ParseAssignmentExpression(
+   if (Tok.is(tok::kw_co_yield))
+     return ParseCoyieldExpression();
+ 
++  if (getLangOpts().CPlusPlusMG) {
++    ExprResult TE = TryParseCXXMGTypePredicateExpression();
++    if (TE.isUsable() || TE.isInvalid())
++      return TE;
++  }
++
+   if (getLangOpts().CPlusPlusMG) {
+     ExprResult TE = TryParseCXXMGImplementsExpression();
+     if (TE.isInvalid())
+@@ -108,6 +114,12 @@ ExprResult Parser::ParseConditionalExpression() {
+     return ExprError();
+   }
+ 
++  if (getLangOpts().CPlusPlusMG) {
++    ExprResult TE = TryParseCXXMGTypePredicateExpression();
++    if (TE.isUsable() || TE.isInvalid())
++      return TE;
++  }
++
+   if (getLangOpts().CPlusPlusMG) {
+     ExprResult TE = TryParseCXXMGImplementsExpression();
+     if (TE.isInvalid())
+@@ -140,6 +152,12 @@ ExprResult Parser::ParseConstantExpressionInExprEvalContext(
+              Sema::ExpressionEvaluationContext::ConstantEvaluated &&
+          "Call this function only if your ExpressionEvaluationContext is "
+          "already ConstantEvaluated");
++  if (getLangOpts().CPlusPlusMG) {
++    ExprResult TE = TryParseCXXMGTypePredicateExpression();
++    if (TE.isUsable() || TE.isInvalid())
++      return Actions.ActOnConstantExpression(TE);
++  }
++
+   if (getLangOpts().CPlusPlusMG) {
+     ExprResult TE = TryParseCXXMGImplementsExpression();
+     if (TE.isInvalid())
+diff --git a/clang/lib/Sema/CMakeLists.txt b/clang/lib/Sema/CMakeLists.txt
+index 3a7236fa3ab8..a77b26c75b2d 100644
+--- a/clang/lib/Sema/CMakeLists.txt
++++ b/clang/lib/Sema/CMakeLists.txt
+@@ -46,6 +46,7 @@ add_clang_library(clangSema
+   SemaConcept.cpp
+   SemaConsumer.cpp
+   SemaCoroutine.cpp
++  SemaCXXMGTypeExpr.cpp
+   SemaCUDA.cpp
+   SemaDirectX.cpp
+   SemaDecl.cpp
+diff --git a/clang/lib/Sema/SemaCXXMGTypeExpr.cpp b/clang/lib/Sema/SemaCXXMGTypeExpr.cpp
+new file mode 100644
+index 000000000000..b87cf3a38595
+--- /dev/null
++++ b/clang/lib/Sema/SemaCXXMGTypeExpr.cpp
+@@ -0,0 +1,563 @@
++//===------ SemaCXXMGTypeExpr.cpp - C++MG Type Expressions ---------------===//
++//
++//  This file implements semantic analysis for C++MG structural type
++//  expressions. This first slice handles non-dependent aliases and predicates.
++//
++//===----------------------------------------------------------------------===//
++
++#include "clang/Sema/Sema.h"
++#include "clang/AST/ASTContext.h"
++#include "clang/AST/ASTConsumer.h"
++#include "clang/AST/DeclCXX.h"
++#include "clang/AST/ExprCXX.h"
++#include "clang/Basic/DiagnosticSema.h"
++#include "clang/Sema/DeclSpec.h"
++
++using namespace clang;
++
++namespace {
++
++enum class CXXMGMemberKind {
++  Field,
++  StaticData,
++  InstanceMethod,
++  StaticMethod,
++  TypeAliasExact,
++  AssociatedTypeAny,
++  StaticFunctionAnyReturn
++};
++
++struct CXXMGMemberDescriptor {
++  CXXMGMemberKind Kind;
++  DeclarationName Name;
++  SourceLocation Loc;
++  NamedDecl *SourceDecl = nullptr;
++
++  QualType ValueType;
++  TypeSourceInfo *ValueTypeInfo = nullptr;
++
++  QualType FunctionType;
++  TypeSourceInfo *FunctionTypeInfo = nullptr;
++
++  AccessSpecifier Access = AS_public;
++};
++
++struct CXXMGMemberSet {
++  SmallVector<CXXMGMemberDescriptor, 16> Members;
++  bool Invalid = false;
++  bool IsTrait = false;
++};
++
++static StringRef getCXXMGOpName(tok::TokenKind Op) {
++  if (const char *Spelling = tok::getPunctuatorSpelling(Op))
++    return Spelling;
++  return tok::getTokenName(Op);
++}
++
++static bool sameValueType(ASTContext &Ctx, QualType A, QualType B) {
++  return !A.isNull() && !B.isNull() &&
++         Ctx.hasSameType(A.getCanonicalType(), B.getCanonicalType());
++}
++
++static const FunctionProtoType *getProto(QualType T) {
++  return T.isNull() ? nullptr : T->getAs<FunctionProtoType>();
++}
++
++static bool sameFunctionSignature(ASTContext &Ctx,
++                                  const CXXMGMemberDescriptor &A,
++                                  const CXXMGMemberDescriptor &B,
++                                  bool IgnoreReturnType) {
++  const auto *AP = getProto(A.FunctionType);
++  const auto *BP = getProto(B.FunctionType);
++  if (!AP || !BP)
++    return false;
++  if (!IgnoreReturnType &&
++      !Ctx.hasSameType(AP->getReturnType().getCanonicalType(),
++                       BP->getReturnType().getCanonicalType()))
++    return false;
++  if (AP->getNumParams() != BP->getNumParams())
++    return false;
++  if (AP->getMethodQuals() != BP->getMethodQuals() ||
++      AP->getRefQualifier() != BP->getRefQualifier())
++    return false;
++  for (unsigned I = 0, E = AP->getNumParams(); I != E; ++I)
++    if (!Ctx.hasSameType(AP->getParamType(I).getCanonicalType(),
++                         BP->getParamType(I).getCanonicalType()))
++      return false;
++  return true;
++}
++
++static bool memberMatches(ASTContext &Ctx, const CXXMGMemberDescriptor &Req,
++                          const CXXMGMemberDescriptor &Cand) {
++  if (Req.Name != Cand.Name)
++    return false;
++
++  if (Req.Kind == CXXMGMemberKind::AssociatedTypeAny)
++    return Cand.Kind == CXXMGMemberKind::AssociatedTypeAny ||
++           Cand.Kind == CXXMGMemberKind::TypeAliasExact;
++
++  if (Req.Kind == CXXMGMemberKind::StaticFunctionAnyReturn)
++    return Cand.Kind == CXXMGMemberKind::StaticMethod &&
++           sameFunctionSignature(Ctx, Req, Cand, /*IgnoreReturnType=*/true);
++
++  if (Req.Kind != Cand.Kind)
++    return false;
++
++  switch (Req.Kind) {
++  case CXXMGMemberKind::Field:
++  case CXXMGMemberKind::StaticData:
++  case CXXMGMemberKind::TypeAliasExact:
++    return sameValueType(Ctx, Req.ValueType, Cand.ValueType);
++  case CXXMGMemberKind::InstanceMethod:
++  case CXXMGMemberKind::StaticMethod:
++    return sameFunctionSignature(Ctx, Req, Cand, /*IgnoreReturnType=*/false);
++  case CXXMGMemberKind::AssociatedTypeAny:
++  case CXXMGMemberKind::StaticFunctionAnyReturn:
++    llvm_unreachable("handled above");
++  }
++  llvm_unreachable("unknown C++MG member kind");
++}
++
++static bool canCoexist(ASTContext &Ctx, bool ResultIsTrait,
++                       const CXXMGMemberDescriptor &A,
++                       const CXXMGMemberDescriptor &B) {
++  if (A.Name != B.Name)
++    return true;
++
++  if (ResultIsTrait) {
++    if (A.Kind == CXXMGMemberKind::AssociatedTypeAny &&
++        B.Kind == CXXMGMemberKind::AssociatedTypeAny)
++      return true;
++    if ((A.Kind == CXXMGMemberKind::AssociatedTypeAny &&
++         B.Kind == CXXMGMemberKind::TypeAliasExact) ||
++        (A.Kind == CXXMGMemberKind::TypeAliasExact &&
++         B.Kind == CXXMGMemberKind::AssociatedTypeAny))
++      return true;
++    if (A.Kind == CXXMGMemberKind::TypeAliasExact &&
++        B.Kind == CXXMGMemberKind::TypeAliasExact)
++      return sameValueType(Ctx, A.ValueType, B.ValueType);
++  }
++
++  bool AMethod = A.Kind == CXXMGMemberKind::InstanceMethod ||
++                 A.Kind == CXXMGMemberKind::StaticMethod;
++  bool BMethod = B.Kind == CXXMGMemberKind::InstanceMethod ||
++                 B.Kind == CXXMGMemberKind::StaticMethod;
++  if (AMethod && BMethod)
++    return !sameFunctionSignature(Ctx, A, B, /*IgnoreReturnType=*/false);
++
++  return false;
++}
++
++class CXXMGTypeExprSema {
++  Sema &S;
++  ASTContext &Ctx;
++
++public:
++  CXXMGTypeExprSema(Sema &S) : S(S), Ctx(S.Context) {}
++
++  CXXRecordDecl *resolveOperand(TypeSourceInfo *TSI, SourceLocation Loc,
++                                bool Diagnose) {
++    if (!TSI) {
++      if (Diagnose)
++        S.Diag(Loc, diag::err_cxxmg_type_expr_expected_type_operand);
++      return nullptr;
++    }
++
++    QualType QT = TSI->getType();
++    if (QT->isDependentType()) {
++      if (Diagnose)
++        S.Diag(Loc, diag::err_cxxmg_type_expr_expected_type_operand);
++      return nullptr;
++    }
++    if (QT->isReferenceType() || QT->isPointerType() || QT->isArrayType() ||
++        QT->isFunctionType()) {
++      if (Diagnose)
++        S.Diag(Loc, diag::err_cxxmg_type_expr_invalid_operand) << QT;
++      return nullptr;
++    }
++
++    QT = QT.getUnqualifiedType();
++    auto *RD = QT.getDesugaredType(Ctx)->getAsCXXRecordDecl();
++    if (!RD) {
++      if (Diagnose)
++        S.Diag(Loc, diag::err_cxxmg_type_expr_invalid_operand) << QT;
++      return nullptr;
++    }
++    if (RD->isUnion()) {
++      if (Diagnose)
++        S.Diag(Loc, diag::err_cxxmg_type_expr_union_operand) << QT;
++      return nullptr;
++    }
++    if (!RD->hasDefinition()) {
++      if (Diagnose)
++        S.Diag(Loc, diag::err_cxxmg_type_expr_incomplete_operand) << QT;
++      return nullptr;
++    }
++    RD = RD->getDefinitionOrSelf();
++    return RD->isInvalidDecl() ? nullptr : RD;
++  }
++
++  bool collect(CXXRecordDecl *RD, SmallVectorImpl<CXXMGMemberDescriptor> &Out,
++               SourceLocation OpLoc) {
++    bool Invalid = false;
++    for (Decl *D : RD->decls()) {
++      if (auto *FD = dyn_cast<FieldDecl>(D)) {
++        if (!FD->getDeclName() || FD->isBitField()) {
++          S.Diag(FD->getLocation(), diag::err_cxxmg_type_expr_unsupported_member)
++              << FD;
++          Invalid = true;
++          continue;
++        }
++        CXXMGMemberDescriptor M;
++        M.Kind = CXXMGMemberKind::Field;
++        M.Name = FD->getDeclName();
++        M.Loc = FD->getLocation();
++        M.SourceDecl = FD;
++        M.ValueType = FD->getType();
++        M.ValueTypeInfo = FD->getTypeSourceInfo();
++        M.Access = FD->getAccess();
++        Out.push_back(M);
++        continue;
++      }
++
++      if (auto *VD = dyn_cast<VarDecl>(D)) {
++        if (!VD->isStaticDataMember())
++          continue;
++        CXXMGMemberDescriptor M;
++        M.Kind = CXXMGMemberKind::StaticData;
++        M.Name = VD->getDeclName();
++        M.Loc = VD->getLocation();
++        M.SourceDecl = VD;
++        M.ValueType = VD->getType();
++        M.ValueTypeInfo = VD->getTypeSourceInfo();
++        M.Access = VD->getAccess();
++        Out.push_back(M);
++        continue;
++      }
++
++      if (auto *TD = dyn_cast<TypedefNameDecl>(D)) {
++        CXXMGMemberDescriptor M;
++        M.Kind = CXXMGMemberKind::TypeAliasExact;
++        M.Name = TD->getDeclName();
++        M.Loc = TD->getLocation();
++        M.SourceDecl = TD;
++        M.ValueType = TD->getUnderlyingType();
++        M.ValueTypeInfo = TD->getTypeSourceInfo();
++        M.Access = TD->getAccess();
++        Out.push_back(M);
++        continue;
++      }
++
++      if (auto *TR = dyn_cast<TraitRequirementDecl>(D)) {
++        CXXMGMemberDescriptor M;
++        M.Kind = TR->isAssociatedTypeAny()
++                     ? CXXMGMemberKind::AssociatedTypeAny
++                     : CXXMGMemberKind::StaticFunctionAnyReturn;
++        M.Name = TR->getDeclName();
++        M.Loc = TR->getLocation();
++        M.SourceDecl = TR;
++        M.FunctionTypeInfo = TR->getFunctionTypeInfo();
++        if (M.FunctionTypeInfo)
++          M.FunctionType = M.FunctionTypeInfo->getType();
++        else if (TR->isStaticFunctionAnyReturn())
++          M.FunctionType = Ctx.getFunctionType(Ctx.VoidTy, {},
++                                               FunctionProtoType::ExtProtoInfo());
++        Out.push_back(M);
++        continue;
++      }
++
++      if (auto *MD = dyn_cast<CXXMethodDecl>(D)) {
++        if (isa<CXXConstructorDecl>(MD) || isa<CXXDestructorDecl>(MD) ||
++            isa<CXXConversionDecl>(MD) ||
++            MD->getDeclName().getNameKind() == DeclarationName::CXXOperatorName ||
++            MD->isTemplated()) {
++          S.Diag(MD->getLocation(),
++                 diag::err_cxxmg_type_expr_unsupported_member)
++              << MD;
++          Invalid = true;
++          continue;
++        }
++        CXXMGMemberDescriptor M;
++        M.Kind = MD->isStatic() ? CXXMGMemberKind::StaticMethod
++                                : CXXMGMemberKind::InstanceMethod;
++        M.Name = MD->getDeclName();
++        M.Loc = MD->getLocation();
++        M.SourceDecl = MD;
++        M.FunctionType = MD->getType();
++        M.FunctionTypeInfo = MD->getTypeSourceInfo();
++        M.Access = MD->getAccess();
++        Out.push_back(M);
++        continue;
++      }
++    }
++    if (Invalid)
++      S.Diag(OpLoc, diag::note_cxxmg_type_expr_in_result);
++    return !Invalid;
++  }
++
++  CXXMGMemberSet buildSet(const ParsedCXXMGTypeExpr &TE) {
++    if (TE.K == ParsedCXXMGTypeExpr::Operand) {
++      CXXMGMemberSet Set;
++      CXXRecordDecl *RD = resolveOperand(TE.OperandTSI, TE.BeginLoc, true);
++      if (!RD) {
++        Set.Invalid = true;
++        return Set;
++      }
++      Set.IsTrait = RD->isTrait();
++      Set.Invalid = !collect(RD, Set.Members, TE.BeginLoc);
++      return Set;
++    }
++
++    CXXMGMemberSet L = buildSet(*TE.LHS);
++    CXXMGMemberSet R = buildSet(*TE.RHS);
++    if (L.Invalid || R.Invalid) {
++      L.Invalid = true;
++      return L;
++    }
++
++    if (TE.Op == tok::plus)
++      return composePlus(L, R, TE.OpLoc);
++    if (TE.Op == tok::minus)
++      return composeMinus(L, R, TE.OpLoc);
++
++    S.Diag(TE.OpLoc, diag::err_cxxmg_type_expr_invalid_operator_predicate_sema)
++        << getCXXMGOpName(TE.Op);
++    L.Invalid = true;
++    return L;
++  }
++
++  CXXMGMemberSet composePlus(const CXXMGMemberSet &L,
++                             const CXXMGMemberSet &R, SourceLocation OpLoc) {
++    CXXMGMemberSet Result;
++    Result.IsTrait = L.IsTrait || R.IsTrait;
++    Result.Members = L.Members;
++
++    for (const CXXMGMemberDescriptor &M : R.Members) {
++      bool Skip = false;
++      for (CXXMGMemberDescriptor &Existing : Result.Members) {
++        if (Existing.Name != M.Name)
++          continue;
++        if (!canCoexist(Ctx, Result.IsTrait, Existing, M)) {
++          S.Diag(M.Loc, diag::err_cxxmg_type_expr_conflicting_member) << M.Name;
++          S.Diag(Existing.Loc, diag::note_cxxmg_type_expr_previous_member);
++          S.Diag(OpLoc, diag::note_cxxmg_type_expr_in_result);
++          Result.Invalid = true;
++          return Result;
++        }
++        if (Result.IsTrait &&
++            Existing.Kind == CXXMGMemberKind::AssociatedTypeAny &&
++            M.Kind == CXXMGMemberKind::TypeAliasExact) {
++          Existing = M;
++          Skip = true;
++          break;
++        }
++        if (Result.IsTrait &&
++            ((Existing.Kind == CXXMGMemberKind::AssociatedTypeAny &&
++              M.Kind == CXXMGMemberKind::AssociatedTypeAny) ||
++             (Existing.Kind == CXXMGMemberKind::TypeAliasExact &&
++              M.Kind == CXXMGMemberKind::AssociatedTypeAny) ||
++             (Existing.Kind == CXXMGMemberKind::TypeAliasExact &&
++              M.Kind == CXXMGMemberKind::TypeAliasExact))) {
++          Skip = true;
++          break;
++        }
++      }
++      if (!Skip)
++        Result.Members.push_back(M);
++    }
++    return Result;
++  }
++
++  CXXMGMemberSet composeMinus(const CXXMGMemberSet &L,
++                              const CXXMGMemberSet &R, SourceLocation OpLoc) {
++    CXXMGMemberSet Result = L;
++    Result.IsTrait = L.IsTrait;
++    bool RemovedAny = false;
++    for (const CXXMGMemberDescriptor &Req : R.Members) {
++      auto NewEnd = llvm::remove_if(Result.Members, [&](const auto &Cand) {
++        return memberMatches(Ctx, Req, Cand);
++      });
++      RemovedAny |= NewEnd != Result.Members.end();
++      Result.Members.erase(NewEnd, Result.Members.end());
++    }
++    if (!RemovedAny)
++      S.Diag(OpLoc, diag::warn_cxxmg_type_expr_noop_subtraction);
++    return Result;
++  }
++
++  QualType synthesize(Scope *Sc, SourceLocation Loc,
++                      const CXXMGMemberSet &Set, Decl **OwnedType) {
++    TagTypeKind Kind = Set.IsTrait ? TagTypeKind::Trait : TagTypeKind::Struct;
++    auto *RD =
++        CXXRecordDecl::Create(Ctx, Kind, S.CurContext, Loc, Loc, nullptr);
++    RD->setImplicit();
++    RD->startDefinition();
++
++    SmallVector<Decl *, 16> Fields;
++    for (const CXXMGMemberDescriptor &M : Set.Members) {
++      Decl *D = cloneMember(RD, M);
++      if (!D)
++        continue;
++      D->setAccess(M.Access == AS_none ? AS_public : M.Access);
++      RD->addDecl(D);
++      if (isa<FieldDecl>(D))
++        Fields.push_back(D);
++    }
++
++    S.ActOnFields(Sc, Loc, RD, Fields, Loc, Loc, ParsedAttributesView());
++    S.CheckCompletedCXXClass(Sc, RD);
++    if (!RD->isInvalidDecl())
++      S.Consumer.HandleTagDeclDefinition(RD);
++
++    QualType Ty = Ctx.getCanonicalTagType(RD);
++    if (OwnedType)
++      *OwnedType = RD;
++    return Ty;
++  }
++
++  Decl *cloneMember(CXXRecordDecl *RD, const CXXMGMemberDescriptor &M) {
++    switch (M.Kind) {
++    case CXXMGMemberKind::Field: {
++      auto *FD = cast<FieldDecl>(M.SourceDecl);
++      InClassInitStyle InitStyle = FD->getInClassInitStyle();
++      auto *NewFD = FieldDecl::Create(Ctx, RD, FD->getBeginLoc(),
++                                      FD->getLocation(), FD->getIdentifier(),
++                                      FD->getType(), FD->getTypeSourceInfo(),
++                                      nullptr, FD->isMutable(), InitStyle);
++      if (Expr *Init = FD->getInClassInitializer())
++        NewFD->setInClassInitializer(Init);
++      return NewFD;
++    }
++    case CXXMGMemberKind::StaticData: {
++      auto *VD = cast<VarDecl>(M.SourceDecl);
++      auto *NewVD = VarDecl::Create(Ctx, RD, VD->getBeginLoc(),
++                                    VD->getLocation(), VD->getIdentifier(),
++                                    VD->getType(), VD->getTypeSourceInfo(),
++                                    SC_Static);
++      if (VD->isInline())
++        NewVD->setInlineSpecified();
++      if (VD->hasInit())
++        NewVD->setInit(VD->getInit());
++      return NewVD;
++    }
++    case CXXMGMemberKind::TypeAliasExact: {
++      auto *TD = cast<TypedefNameDecl>(M.SourceDecl);
++      if (auto *Alias = dyn_cast<TypeAliasDecl>(TD))
++        return TypeAliasDecl::Create(Ctx, RD, Alias->getBeginLoc(),
++                                     Alias->getLocation(),
++                                     Alias->getIdentifier(),
++                                     Alias->getTypeSourceInfo());
++      return TypedefDecl::Create(Ctx, RD, TD->getBeginLoc(),
++                                 TD->getLocation(), TD->getIdentifier(),
++                                 TD->getTypeSourceInfo());
++    }
++    case CXXMGMemberKind::AssociatedTypeAny: {
++      auto *TR = cast<TraitRequirementDecl>(M.SourceDecl);
++      return TraitRequirementDecl::Create(
++          Ctx, RD, TR->getKeywordLoc(), TR->getLocation(), TR->getIdentifier(),
++          TraitRequirementDecl::AssociatedTypeAny, nullptr);
++    }
++    case CXXMGMemberKind::StaticFunctionAnyReturn: {
++      auto *TR = cast<TraitRequirementDecl>(M.SourceDecl);
++      return TraitRequirementDecl::Create(
++          Ctx, RD, TR->getKeywordLoc(), TR->getLocation(), TR->getIdentifier(),
++          TraitRequirementDecl::StaticFunctionAnyReturn,
++          TR->getFunctionTypeInfo());
++    }
++    case CXXMGMemberKind::InstanceMethod:
++    case CXXMGMemberKind::StaticMethod: {
++      auto *MD = cast<CXXMethodDecl>(M.SourceDecl);
++      auto *NewMD = CXXMethodDecl::Create(
++          Ctx, RD, MD->getBeginLoc(), MD->getNameInfo(), MD->getType(),
++          MD->getTypeSourceInfo(), MD->isStatic() ? SC_Static : SC_None,
++          MD->UsesFPIntrin(), MD->isInlineSpecified(),
++          MD->getConstexprKind(), MD->getEndLoc(),
++          MD->getTrailingRequiresClause());
++      SmallVector<ParmVarDecl *, 8> Params;
++      for (ParmVarDecl *P : MD->parameters()) {
++        auto *NewP = ParmVarDecl::Create(
++            Ctx, NewMD, P->getBeginLoc(), P->getLocation(), P->getIdentifier(),
++            P->getType(), P->getTypeSourceInfo(), P->getStorageClass(),
++            P->getDefaultArg());
++        Params.push_back(NewP);
++      }
++      NewMD->setParams(Params);
++      if (MD->doesThisDeclarationHaveABody())
++        NewMD->setBody(MD->getBody());
++      return NewMD;
++    }
++    }
++    llvm_unreachable("unknown C++MG member kind");
++  }
++
++  bool evaluatePredicate(const ParsedCXXMGTypeExpr &TE, bool &Result) {
++    if (TE.K != ParsedCXXMGTypeExpr::Binary ||
++        (TE.Op != tok::ampamp && TE.Op != tok::pipepipe)) {
++      S.Diag(TE.BeginLoc,
++             diag::err_cxxmg_type_expr_invalid_operator_predicate_sema)
++          << getCXXMGOpName(TE.Op);
++      return false;
++    }
++
++    CXXMGMemberSet Req = buildSet(*TE.LHS);
++    CXXMGMemberSet Cand = buildSet(*TE.RHS);
++    if (Req.Invalid || Cand.Invalid)
++      return false;
++
++    if (TE.Op == tok::ampamp) {
++      Result = llvm::all_of(Req.Members, [&](const auto &R) {
++        return llvm::any_of(Cand.Members,
++                            [&](const auto &C) { return memberMatches(Ctx, R, C); });
++      });
++      return true;
++    }
++
++    Result = llvm::any_of(Req.Members, [&](const auto &R) {
++      return llvm::any_of(Cand.Members,
++                          [&](const auto &C) { return memberMatches(Ctx, R, C); });
++    });
++    return true;
++  }
++};
++
++} // namespace
++
++TypeResult Sema::ActOnCXXMGTypeAliasExpression(
++    Scope *CurScope, AccessSpecifier AS, MultiTemplateParamsArg TemplateParams,
++    SourceLocation UsingLoc, UnqualifiedId &Name,
++    const ParsedAttributesView &AttrList, const ParsedCXXMGTypeExpr &TE,
++    Decl **DeclFromDeclSpec) {
++  (void)AS;
++  (void)TemplateParams;
++  (void)Name;
++  (void)AttrList;
++
++  if (!getLangOpts().CPlusPlusMG) {
++    Diag(UsingLoc, diag::err_cxxmg_type_expr_requires_cxxmg);
++    return true;
++  }
++
++  CXXMGTypeExprSema Impl(*this);
++  CXXMGMemberSet Set = Impl.buildSet(TE);
++  if (Set.Invalid)
++    return true;
++
++  QualType Ty = Impl.synthesize(CurScope, UsingLoc, Set, DeclFromDeclSpec);
++  TypeSourceInfo *TSI = Context.getTrivialTypeSourceInfo(Ty, UsingLoc);
++  return CreateParsedType(Ty, TSI);
++}
++
++ExprResult Sema::ActOnCXXMGTypePredicateExpression(
++    Scope *S, const ParsedCXXMGTypeExpr &TE) {
++  if (!getLangOpts().CPlusPlusMG) {
++    Diag(TE.BeginLoc, diag::err_cxxmg_type_expr_requires_cxxmg);
++    return ExprError();
++  }
++
++  bool Result = false;
++  CXXMGTypeExprSema Impl(*this);
++  if (!Impl.evaluatePredicate(TE, Result))
++    return ExprError();
++
++  return CXXBoolLiteralExpr::Create(Context, Result, Context.BoolTy, TE.OpLoc);
++}
+diff --git a/clang/lib/Serialization/ASTReaderStmt.cpp b/clang/lib/Serialization/ASTReaderStmt.cpp
+index 493fda644d58..691543924495 100644
+--- a/clang/lib/Serialization/ASTReaderStmt.cpp
++++ b/clang/lib/Serialization/ASTReaderStmt.cpp
+@@ -2231,6 +2231,11 @@ void ASTStmtReader::VisitCXXMGImplementsExpr(CXXMGImplementsExpr *E) {
+   E->setSourceRange(SourceRange(Begin, End));
+ }
+ 
++void ASTStmtReader::VisitCXXMGTypeCheckExpr(CXXMGTypeCheckExpr *E) {
++  VisitExpr(E);
++  E->setTypeExprNode(Record.readCXXMGTypeExprNodeRef());
++}
++
+ void ASTStmtReader::VisitArrayTypeTraitExpr(ArrayTypeTraitExpr *E) {
+   VisitExpr(E);
+   E->ArrayTypeTraitExprBits.ATT = (ArrayTypeTrait)Record.readInt();
+diff --git a/clang/lib/Serialization/ASTWriterStmt.cpp b/clang/lib/Serialization/ASTWriterStmt.cpp
+index 90028a12fb58..de7a6c7ff9f8 100644
+--- a/clang/lib/Serialization/ASTWriterStmt.cpp
++++ b/clang/lib/Serialization/ASTWriterStmt.cpp
+@@ -2242,6 +2242,12 @@ void ASTStmtWriter::VisitCXXMGImplementsExpr(CXXMGImplementsExpr *E) {
+   Code = serialization::EXPR_CXXMG_IMPLEMENTS;
+ }
+ 
++void ASTStmtWriter::VisitCXXMGTypeCheckExpr(CXXMGTypeCheckExpr *E) {
++  VisitExpr(E);
++  Record.AddCXXMGTypeExprNode(E->getTypeExprNode());
++  Code = serialization::EXPR_CXXMG_TYPE_CHECK;
++}
++
+ void ASTStmtWriter::VisitArrayTypeTraitExpr(ArrayTypeTraitExpr *E) {
+   VisitExpr(E);
+   Record.push_back(E->getTrait());
+diff --git a/clang/test/CXXMG/type-expressions/type-expr-add-records.cpp b/clang/test/CXXMG/type-expressions/type-expr-add-records.cpp
+new file mode 100644
+index 000000000000..6fa28ea30e80
+--- /dev/null
++++ b/clang/test/CXXMG/type-expressions/type-expr-add-records.cpp
+@@ -0,0 +1,18 @@
++// RUN: %clang_cc1 -std=c++20 -Wno-non-c-typedef-for-linkage -fsyntax-only -verify %s
++// expected-no-diagnostics
++
++#if !__has_feature(cxxmg_type_expressions)
++#error missing cxxmg type expressions feature
++#endif
++
++#ifndef __cxxmg_type_expressions
++#error missing cxxmg type expressions macro
++#endif
++
++struct A { int value = 0; };
++struct B { bool test = false; };
++
++using C = A + B;
++
++static_assert(__is_same(decltype(C{}.value), int));
++static_assert(__is_same(decltype(C{}.test), bool));
+diff --git a/clang/test/CXXMG/type-expressions/type-expr-associated-types.cpp b/clang/test/CXXMG/type-expressions/type-expr-associated-types.cpp
+new file mode 100644
+index 000000000000..f943263fde8c
+--- /dev/null
++++ b/clang/test/CXXMG/type-expressions/type-expr-associated-types.cpp
+@@ -0,0 +1,23 @@
++// RUN: %clang_cc1 -std=c++20 -fsyntax-only -verify %s
++// expected-no-diagnostics
++
++trait AnyType {
++  using type;
++};
++
++trait ExactType {
++  using type = int;
++};
++
++struct A {
++  using type = int;
++};
++
++struct B {
++  using type = bool;
++};
++
++static_assert(AnyType && A);
++static_assert(ExactType && A);
++static constexpr bool exactB = ExactType && B;
++static_assert(!exactB);
+diff --git a/clang/test/CXXMG/type-expressions/type-expr-conflicts.cpp b/clang/test/CXXMG/type-expressions/type-expr-conflicts.cpp
+new file mode 100644
+index 000000000000..04605a0e21c5
+--- /dev/null
++++ b/clang/test/CXXMG/type-expressions/type-expr-conflicts.cpp
+@@ -0,0 +1,6 @@
++// RUN: %clang_cc1 -std=c++20 -fsyntax-only -verify %s
++
++struct A { int x; }; // expected-note {{previous member declared here}}
++struct B { bool x; }; // expected-error {{conflicting member 'x'}}
++
++using C = A + B; // expected-note {{while forming result of type expression here}}
+diff --git a/clang/test/CXXMG/type-expressions/type-expr-predicates.cpp b/clang/test/CXXMG/type-expressions/type-expr-predicates.cpp
+new file mode 100644
+index 000000000000..b7c4121521fe
+--- /dev/null
++++ b/clang/test/CXXMG/type-expressions/type-expr-predicates.cpp
+@@ -0,0 +1,17 @@
++// RUN: %clang_cc1 -std=c++20 -fsyntax-only -verify %s
++// expected-no-diagnostics
++
++trait Combined {
++  int value;
++  bool test;
++};
++
++struct A { int value; };
++struct B { bool test; };
++struct C { int value; bool test; };
++
++static_assert(Combined || A);
++static_assert(Combined || B);
++static_assert(Combined && C);
++static constexpr bool allA = Combined && A;
++static_assert(!allA);
+diff --git a/clang/test/CXXMG/type-expressions/type-expr-subtract-records.cpp b/clang/test/CXXMG/type-expressions/type-expr-subtract-records.cpp
+new file mode 100644
+index 000000000000..1cfc4a62c959
+--- /dev/null
++++ b/clang/test/CXXMG/type-expressions/type-expr-subtract-records.cpp
+@@ -0,0 +1,10 @@
++// RUN: %clang_cc1 -std=c++20 -Wno-non-c-typedef-for-linkage -fsyntax-only -verify %s
++
++struct A { int value = 0; };
++struct B { bool test = false; };
++
++using C = A + B;
++using D = C - A;
++
++static_assert(__is_same(decltype(D{}.test), bool));
++auto missing = D{}.value; // expected-error {{no member named 'value'}}
+-- 
+2.54.0
+

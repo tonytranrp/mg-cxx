@@ -5,7 +5,7 @@ Subject: [PATCH 04/11] clang-mg: update conditional-members
 
 
 diff --git a/clang/include/clang/Parse/Parser.h b/clang/include/clang/Parse/Parser.h
-index eae0d6791742..7e874e2c57af 100644
+index 05cab687965b..d4b85b508141 100644
 --- a/clang/include/clang/Parse/Parser.h
 +++ b/clang/include/clang/Parse/Parser.h
 @@ -3544,8 +3544,6 @@ private:

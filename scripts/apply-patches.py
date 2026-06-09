@@ -2,199 +2,224 @@
 from __future__ import annotations
 
 import os
+import shutil
+import subprocess
 import sys
 from pathlib import Path
-from collections import deque
 
-from clang_mg_common import (env_or_default, git, git_output, is_ignored_patch_dir_name,
-                             parse_enabled, read_feature_config, root_from_script, run,
-                             write_default_feature_config)
+from clang_mg_common import git, git_in_progress_paths, git_output, root_from_script
 
 
-def fail(message: str) -> None:
+def fail(message: str) -> int:
     print(message)
-    raise SystemExit(1)
+    return 1
 
 
-def feature_dirs(patch_root: Path) -> list[Path]:
-    return sorted([p for p in patch_root.iterdir() if p.is_dir() and not is_ignored_patch_dir_name(p.name)], key=lambda p: str(p))
+def is_windows() -> bool:
+    return os.name == "nt"
 
 
-def ignored_patch_dirs(patch_root: Path) -> list[Path]:
-    return sorted([p for p in patch_root.iterdir() if p.is_dir() and is_ignored_patch_dir_name(p.name)], key=lambda p: str(p))
+def patch_files(patch_root: Path) -> list[Path]:
+    return sorted(
+        [
+            p for p in patch_root.glob("*.patch")
+            if not (
+                p.name.endswith(".backup.patch") or
+                p.name.endswith(".bak.patch") or
+                p.name.endswith(".old.patch") or
+                p.name.endswith("~")
+            )
+        ],
+        key=lambda p: p.name,
+    )
 
 
-def load_feature_configs(patch_root: Path, feature_config_name: str):
-    features: list[str] = []
-    feature_dirs_by_name: dict[str, Path] = {}
-    feature_has_patches: dict[str, int] = {}
-    feature_enabled: dict[str, int] = {}
-    feature_deps: dict[str, list[str]] = {}
-    feature_before: dict[str, list[str]] = {}
+def show_conflict_help() -> None:
+    print(r"""
+A patch conflict happened.
 
-    ignored = ignored_patch_dirs(patch_root)
-    if ignored:
-        print("Ignoring backup/temp patch directories:")
-        for p in ignored:
-            print(f"  {p}")
+Resolve it like this:
+
+  1. Open the conflicted files and fix the conflict markers.
+  2. Check the result:
+       git status
+       git diff
+  3. Stage the resolved files:
+       git add <files>
+  4. Come back here and choose:
+       c) continue
+
+Useful commands:
+
+  git am --show-current-patch=diff
+  git status
+  git diff
+  git diff --name-only --diff-filter=U
+
+Note:
+  If git says it could not build a fake ancestor, there may be no
+  conflict markers yet. Use p to print the current patch and sh to
+  open a shell for manual recovery.
+""")
+
+
+def menu_git(args: list[str]) -> int:
+    command_text = "git " + " ".join(args)
+    cp = subprocess.run(["git", *args], stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+    if cp.stdout:
+        print(cp.stdout, end="")
+    else:
+        print(f"(no output from {command_text})")
+    if cp.returncode != 0:
         print()
-
-    for feature_dir in feature_dirs(patch_root):
-        feature_name = feature_dir.name
-        config_file = feature_dir / feature_config_name
-        if any(ch.isspace() for ch in feature_name):
-            fail(f"ERROR: Feature directory names cannot contain whitespace:\n  {feature_name}")
-        if not config_file.is_file():
-            print("Generating missing config:")
-            print(f"  {config_file}")
-            write_default_feature_config(config_file, feature_name)
-        features.append(feature_name)
-        feature_dirs_by_name[feature_name] = feature_dir
-        feature_has_patches[feature_name] = 1 if list(feature_dir.glob("*.patch")) else 0
-        cfg = read_feature_config(config_file)
-        feature_enabled[feature_name] = 1 if parse_enabled(str(cfg["enabled"])) else 0
-        feature_deps[feature_name] = list(cfg["depends"])  # type: ignore[arg-type]
-        feature_before[feature_name] = list(cfg["before"])  # type: ignore[arg-type]
-    return features, feature_dirs_by_name, feature_has_patches, feature_enabled, feature_deps, feature_before
+        print(f"ERROR: {command_text} failed with exit code {cp.returncode}.")
+    return cp.returncode
 
 
-def build_feature_order(features: list[str], feature_dirs_by_name: dict[str, Path], feature_has_patches: dict[str, int],
-                        feature_enabled: dict[str, int], feature_deps: dict[str, list[str]],
-                        feature_before: dict[str, list[str]]) -> list[str]:
-    enabled_features: list[str] = []
-    enabled_feature_map: set[str] = set()
-    in_degree: dict[str, int] = {}
-    edges: dict[str, list[str]] = {}
-
-    for feature in features:
-        if feature_has_patches[feature] != 1:
-            print(f"Skipping feature with no .patch files: {feature}")
-            continue
-        if feature_enabled[feature] != 1:
-            print(f"Skipping disabled feature: {feature}")
-            continue
-        enabled_features.append(feature)
-        enabled_feature_map.add(feature)
-        in_degree[feature] = 0
-        edges[feature] = []
-
-    def validate_dependency(feature: str, dep: str) -> None:
-        if dep not in feature_dirs_by_name:
-            print(f"ERROR: Feature '{feature}' depends on unknown feature '{dep}'.")
-            print()
-            print("Known features:")
-            for known in features:
-                print(f"  {known}")
-            raise SystemExit(1)
-        if feature_has_patches[dep] != 1:
-            fail(f"ERROR: Feature '{feature}' depends on '{dep}', but '{dep}' has no .patch files.")
-        if feature_enabled[dep] != 1:
-            print(f"ERROR: Feature '{feature}' depends on '{dep}', but '{dep}' is disabled.")
-            print()
-            print(f"Either enable '{dep}' or disable '{feature}'.")
-            raise SystemExit(1)
-
-    def add_edge(src: str, dst: str) -> None:
-        edges.setdefault(src, []).append(dst)
-        in_degree[dst] = in_degree.get(dst, 0) + 1
-
-    for feature in enabled_features:
-        for dep in feature_deps.get(feature, []):
-            if not dep.strip():
-                continue
-            validate_dependency(feature, dep)
-            add_edge(dep, feature)
-        for before in feature_before.get(feature, []):
-            if not before.strip():
-                continue
-            if before not in feature_dirs_by_name:
-                fail(f"ERROR: Feature '{feature}' has BEFORE entry for unknown feature '{before}'.")
-            if before not in enabled_feature_map:
-                print(f"NOTE: '{feature}' says it should run before '{before}', but '{before}' is not enabled. Ignoring.")
-                continue
-            add_edge(feature, before)
-
-    queue: list[str] = sorted([f for f in enabled_features if in_degree[f] == 0])
-    ordered: list[str] = []
-    while queue:
-        feature = queue.pop(0)
-        ordered.append(feature)
-        for nxt in edges.get(feature, []):
-            in_degree[nxt] -= 1
-            if in_degree[nxt] == 0:
-                queue.append(nxt)
-                queue.sort()
-
-    if len(ordered) != len(enabled_features):
-        print("ERROR: Dependency cycle detected between enabled features.")
-        print()
-        print("Features still blocked:")
-        remaining = False
-        for feature in enabled_features:
-            if in_degree[feature] > 0:
-                print(f"  {feature}")
-                remaining = True
-        if not remaining:
-            print("  unknown")
-        raise SystemExit(1)
-    return ordered
-
-
-def apply_loose_patches(patch_root: Path) -> None:
-    loose = sorted([
-        p for p in patch_root.glob("*.patch")
-        if not (p.name.endswith(".backup.patch") or p.name.endswith(".bak.patch") or p.name.endswith(".old.patch") or p.name.endswith("~"))
-    ], key=lambda p: str(p))
-    if not loose:
-        print("No loose top-level patches found.")
-        return
+def open_resolution_shell(llvm_dir: Path) -> None:
     print()
-    print("Applying loose top-level patches from:")
-    print(str(patch_root))
-    git(["am", "--3way", *[str(p) for p in loose]])
-
-
-def apply_ordered_features(root_dir: Path, llvm_dir: Path, ordered_features: list[str]) -> None:
+    print("Opening a shell in:")
+    print(f"  {llvm_dir}")
     print()
-    print("Feature apply order:")
-    if not ordered_features:
-        print("  No enabled feature patch directories found.")
+    print("When done resolving conflicts, exit the shell to return here.")
+    print()
+    if is_windows():
+        shell = shutil.which("pwsh") or shutil.which("powershell") or os.environ.get("COMSPEC")
+    else:
+        shell = os.environ.get("SHELL") or "/bin/bash"
+    if not shell:
+        print("ERROR: Could not find a shell to open.")
         return
-    for f in ordered_features:
-        print(f"  {f}")
-    apply_feature_script = root_dir / "scripts" / "apply-feature.py"
-    for feature_name in ordered_features:
+    subprocess.run([shell], cwd=llvm_dir)
+
+
+def continue_am() -> bool:
+    print()
+    print("Continuing git am...")
+    if menu_git(["am", "--continue"]) == 0:
+        print("git am completed successfully.")
+        return True
+    print()
+    print("git am still needs attention.")
+    return False
+
+
+def skip_am() -> bool:
+    print()
+    print("Skipping current patch...")
+    if menu_git(["am", "--skip"]) == 0:
+        print("Patch skipped and git am completed successfully.")
+        return True
+    print()
+    print("git am still needs attention.")
+    return False
+
+
+def interactive_am_resolution(llvm_dir: Path) -> bool:
+    show_conflict_help()
+    if not sys.stdin.isatty():
+        print("ERROR: No interactive terminal is available.")
         print()
-        print(f"Applying feature: {feature_name}")
-        env = os.environ.copy()
-        env["LLVM_DIR"] = str(llvm_dir)
-        run([sys.executable, str(apply_feature_script), feature_name], env=env)
+        print("Resolve manually inside LLVM with:")
+        print("  git status")
+        print("  git diff --name-only --diff-filter=U")
+        print("  git add <files>")
+        print("  git am --continue")
+        print()
+        print("Or abort with:")
+        print("  git am --abort")
+        return False
+
+    while True:
+        paths = git_in_progress_paths(llvm_dir)
+        if not paths.get("rebase_apply", Path()).is_dir():
+            return True
+        print(r"""
+Conflict menu:
+  s) show status
+  u) show unresolved files
+  p) show current patch
+  d) show diff
+  a) git add -A
+  c) continue git am
+  k) skip current patch
+  x) abort git am
+  sh) open shell
+""")
+        try:
+            choice = input("Choose an action: ").strip()
+        except EOFError:
+            print()
+            print("ERROR: Could not read from terminal.")
+            print("Leaving git am in progress so you can resolve it manually.")
+            return False
+        if choice == "s":
+            menu_git(["status"])
+        elif choice == "u":
+            menu_git(["diff", "--name-only", "--diff-filter=U"])
+        elif choice == "p":
+            menu_git(["--no-pager", "am", "--show-current-patch=diff"])
+        elif choice == "d":
+            menu_git(["diff"])
+        elif choice == "a":
+            if menu_git(["add", "-A"]) == 0:
+                print("Staged all changes.")
+            else:
+                print("git add failed.")
+        elif choice == "c":
+            if continue_am():
+                return True
+        elif choice == "k":
+            if skip_am():
+                return True
+        elif choice == "x":
+            print()
+            print("Aborting git am...")
+            menu_git(["am", "--abort"])
+            return False
+        elif choice == "sh":
+            open_resolution_shell(llvm_dir)
+        elif choice == "":
+            print("No option entered.")
+        else:
+            print(f"Unknown option: {choice}")
 
 
-def main(argv: list[str]) -> int:
-    script_root = root_from_script(__file__)
-    root_dir = Path(argv[0]).resolve() if len(argv) >= 1 and argv[0].strip() else script_root
-    llvm_dir = Path(argv[1]).resolve() if len(argv) >= 2 and argv[1].strip() else root_dir / "work" / "llvm-project"
+def ensure_no_git_operation_in_progress(llvm_dir: Path) -> bool:
+    paths = git_in_progress_paths(llvm_dir)
+    if paths.get("rebase_merge", Path()).is_dir():
+        print("ERROR: A rebase is currently in progress.")
+        print("Finish or abort it before applying patches.")
+        return False
+    if paths.get("rebase_apply", Path()).is_dir():
+        print("ERROR: A git-am or rebase-apply operation is currently in progress.")
+        print("Finish or abort it before applying patches.")
+        return False
+    if paths.get("merge_head", Path()).is_file():
+        print("ERROR: A merge is currently in progress.")
+        print("Finish or abort it before applying patches.")
+        return False
+    if paths.get("cherry_pick_head", Path()).is_file():
+        print("ERROR: A cherry-pick is currently in progress.")
+        print("Finish or abort it before applying patches.")
+        return False
+    return True
+
+
+def apply_all_patches(root_dir: Path, llvm_dir: Path) -> int:
     patch_root = root_dir / "patches"
-    apply_feature_script = root_dir / "scripts" / "apply-feature.py"
-    feature_config_name = env_or_default("FEATURE_CONFIG_NAME", "feature.conf")
 
-    print("=== apply all clang-mg patches ===")
+    print("=== apply clang-mg patch stack ===")
     print(f"Root dir:   {root_dir}")
     print(f"LLVM dir:   {llvm_dir}")
     print(f"Patch root: {patch_root}")
     print()
 
     if not (llvm_dir / ".git").is_dir():
-        fail(f"ERROR: LLVM repo is not cloned:\n{llvm_dir}")
+        return fail(f"ERROR: LLVM repo is not cloned:\n{llvm_dir}")
     if not patch_root.is_dir():
-        fail(f"ERROR: Patch directory does not exist:\n{patch_root}")
-    if not apply_feature_script.is_file():
-        print("ERROR: apply-feature Python script not found:")
-        print(str(apply_feature_script))
-        print()
-        print("Expected this file to exist:")
-        print("  scripts/apply-feature.py")
+        return fail(f"ERROR: Patch directory does not exist:\n{patch_root}")
+    if not ensure_no_git_operation_in_progress(llvm_dir):
         return 1
 
     old_cwd = Path.cwd()
@@ -204,25 +229,47 @@ def main(argv: list[str]) -> int:
         if status:
             print("ERROR: LLVM has uncommitted changes.")
             print()
-            print("Save, commit, or reset your changes before applying patches.")
+            print("Save, commit, stash, or reset your changes before applying patches.")
             print()
             print("Useful commands:")
             print("  git status")
             print("  git diff")
-            print("  git add .")
-            print('  git commit -m "clang-mg: describe current work"')
+            print("  python3 build.py save")
+            print("  git reset --hard")
             print()
             print("Apply cancelled.")
             return 1
-        features, fdirs, has_patches, enabled, deps, before = load_feature_configs(patch_root, feature_config_name)
-        ordered = build_feature_order(features, fdirs, has_patches, enabled, deps, before)
-        apply_loose_patches(patch_root)
-        apply_ordered_features(root_dir, llvm_dir, ordered)
+
+        patches = patch_files(patch_root)
+        if not patches:
+            print("No top-level .patch files found in:")
+            print(f"  {patch_root}")
+            return 0
+
+        print("Patch apply order:")
+        for p in patches:
+            print(f"  {p.name}")
         print()
-        print("All enabled clang-mg patches applied.")
-        return 0
+
+        cp = git(["am", "--3way", *[str(p) for p in patches]], check=False)
+        if cp.returncode == 0:
+            print("All clang-mg patches applied.")
+            return 0
+
+        if interactive_am_resolution(llvm_dir):
+            print()
+            print("All clang-mg patches applied.")
+            return 0
+        return 1
     finally:
         os.chdir(old_cwd)
+
+
+def main(argv: list[str]) -> int:
+    script_root = root_from_script(__file__)
+    root_dir = Path(argv[0]).resolve() if len(argv) >= 1 and argv[0].strip() else script_root
+    llvm_dir = Path(argv[1]).resolve() if len(argv) >= 2 and argv[1].strip() else root_dir / "work" / "llvm-project"
+    return apply_all_patches(root_dir, llvm_dir)
 
 
 if __name__ == "__main__":

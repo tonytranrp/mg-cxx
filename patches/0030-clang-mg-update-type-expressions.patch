@@ -1,0 +1,317 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Mike <michaelgorney4@gmail.com>
+Date: Sun, 24 May 2026 00:05:15 -0400
+Subject: [PATCH 03/12] clang-mg: update type-expressions
+
+
+diff --git a/clang/include/clang/AST/RecursiveASTVisitor.h b/clang/include/clang/AST/RecursiveASTVisitor.h
+index a02d85affda8..588b66f58a2c 100644
+--- a/clang/include/clang/AST/RecursiveASTVisitor.h
++++ b/clang/include/clang/AST/RecursiveASTVisitor.h
+@@ -1148,6 +1148,10 @@ DEF_TRAVERSE_TYPE(PackIndexingType, {
+   TRY_TO(TraverseStmt(T->getIndexExpr()));
+ })
+ 
++DEF_TRAVERSE_TYPE(CXXMGTypeExprType, {
++  TRY_TO(TraverseCXXMGTypeExprNode(T->getTypeExprNode()));
++})
++
+ DEF_TRAVERSE_TYPE(UnaryTransformType, {
+   TRY_TO(TraverseType(T->getBaseType()));
+   TRY_TO(TraverseType(T->getUnderlyingType()));
+diff --git a/clang/include/clang/AST/TypeLoc.h b/clang/include/clang/AST/TypeLoc.h
+index 714651f1b2e8..6b4714b915f8 100644
+--- a/clang/include/clang/AST/TypeLoc.h
++++ b/clang/include/clang/AST/TypeLoc.h
+@@ -2328,15 +2328,40 @@ public:
+   }
+ };
+ 
++struct CXXMGTypeExprTypeLocInfo {
++  SourceLocation BeginLoc;
++  SourceLocation EndLoc;
++};
++
+ class CXXMGTypeExprTypeLoc
+-    : public InheritingConcreteTypeLoc<UnqualTypeLoc, CXXMGTypeExprTypeLoc,
+-                                       CXXMGTypeExprType> {
++    : public ConcreteTypeLoc<UnqualTypeLoc, CXXMGTypeExprTypeLoc,
++                             CXXMGTypeExprType,
++                             CXXMGTypeExprTypeLocInfo> {
+ public:
++  SourceLocation getBeginLoc() const {
++    return getLocalData()->BeginLoc;
++  }
++
++  void setBeginLoc(SourceLocation Loc) {
++    getLocalData()->BeginLoc = Loc;
++  }
++
++  SourceLocation getEndLoc() const {
++    return getLocalData()->EndLoc;
++  }
++
++  void setEndLoc(SourceLocation Loc) {
++    getLocalData()->EndLoc = Loc;
++  }
++
+   SourceRange getLocalSourceRange() const {
+-    return getTypePtr()->getTypeExprNode()->getSourceRange();
++    return SourceRange(getBeginLoc(), getEndLoc());
+   }
+ 
+-  void initializeLocal(ASTContext &Context, SourceLocation Loc) {}
++  void initializeLocal(ASTContext &Context, SourceLocation Loc) {
++    setBeginLoc(Loc);
++    setEndLoc(Loc);
++  }
+ };
+ 
+ struct UnaryTransformTypeLocInfo {
+diff --git a/clang/lib/AST/ASTImporter.cpp b/clang/lib/AST/ASTImporter.cpp
+index 2aa83362d107..b8fc635b8add 100644
+--- a/clang/lib/AST/ASTImporter.cpp
++++ b/clang/lib/AST/ASTImporter.cpp
+@@ -18,6 +18,7 @@
+ #include "clang/AST/ASTLambda.h"
+ #include "clang/AST/ASTStructuralEquivalence.h"
+ #include "clang/AST/Attr.h"
++#include "clang/AST/CXXMGTypeExpr.h"
+ #include "clang/AST/Decl.h"
+ #include "clang/AST/DeclAccessPair.h"
+ #include "clang/AST/DeclBase.h"
+@@ -1667,6 +1668,59 @@ ASTNodeImporter::VisitPackIndexingType(clang::PackIndexingType const *T) {
+   return Importer.getToContext().getPackIndexingType(*Pattern, *Index);
+ }
+ 
++static Expected<CXXMGTypeExprNode *>
++ImportCXXMGTypeExprNode(ASTImporter &Importer, ASTContext &ToContext,
++                        CXXMGTypeExprNode *Node) {
++  if (!Node)
++    return nullptr;
++
++  ExpectedSLoc BeginOrErr = Importer.Import(Node->getBeginLoc());
++  if (!BeginOrErr)
++    return BeginOrErr.takeError();
++
++  ExpectedSLoc EndOrErr = Importer.Import(Node->getEndLoc());
++  if (!EndOrErr)
++    return EndOrErr.takeError();
++
++  if (Node->isOperand()) {
++    Expected<TypeSourceInfo *> TSIOrErr =
++        Importer.Import(Node->getOperandTypeSourceInfo());
++    if (!TSIOrErr)
++      return TSIOrErr.takeError();
++
++    return CXXMGTypeExprNode::CreateOperand(
++        ToContext, *TSIOrErr, SourceRange(*BeginOrErr, *EndOrErr));
++  }
++
++  ExpectedSLoc OpLocOrErr = Importer.Import(Node->getOperatorLoc());
++  if (!OpLocOrErr)
++    return OpLocOrErr.takeError();
++
++  Expected<CXXMGTypeExprNode *> LHSOrErr =
++      ImportCXXMGTypeExprNode(Importer, ToContext, Node->getLHS());
++  if (!LHSOrErr)
++    return LHSOrErr.takeError();
++
++  Expected<CXXMGTypeExprNode *> RHSOrErr =
++      ImportCXXMGTypeExprNode(Importer, ToContext, Node->getRHS());
++  if (!RHSOrErr)
++    return RHSOrErr.takeError();
++
++  return CXXMGTypeExprNode::CreateBinary(
++      ToContext, Node->getOpcode(), *LHSOrErr, *RHSOrErr, *OpLocOrErr,
++      SourceRange(*BeginOrErr, *EndOrErr));
++}
++
++ExpectedType
++ASTNodeImporter::VisitCXXMGTypeExprType(const CXXMGTypeExprType *T) {
++  Expected<CXXMGTypeExprNode *> NodeOrErr =
++      ImportCXXMGTypeExprNode(Importer, Importer.getToContext(),
++                              T->getTypeExprNode());
++  if (!NodeOrErr)
++    return NodeOrErr.takeError();
++  return Importer.getToContext().getCXXMGTypeExprType(*NodeOrErr);
++}
++
+ ExpectedType ASTNodeImporter::VisitTypedefType(const TypedefType *T) {
+   Expected<TypedefNameDecl *> ToDeclOrErr = import(T->getDecl());
+   if (!ToDeclOrErr)
+diff --git a/clang/lib/AST/ItaniumMangle.cpp b/clang/lib/AST/ItaniumMangle.cpp
+index 2e74aeb558e3..df7574f254a1 100644
+--- a/clang/lib/AST/ItaniumMangle.cpp
++++ b/clang/lib/AST/ItaniumMangle.cpp
+@@ -16,6 +16,7 @@
+ 
+ #include "clang/AST/ASTContext.h"
+ #include "clang/AST/Attr.h"
++#include "clang/AST/CXXMGTypeExpr.h"
+ #include "clang/AST/Decl.h"
+ #include "clang/AST/DeclCXX.h"
+ #include "clang/AST/DeclObjC.h"
+@@ -4429,6 +4430,10 @@ void CXXNameMangler::mangleType(const PackIndexingType *T) {
+   mangleExpression(T->getIndexExpr());
+ }
+ 
++void CXXNameMangler::mangleType(const CXXMGTypeExprType *T) {
++  llvm_unreachable("dependent C++MG type-expression type should not be mangled");
++}
++
+ void CXXNameMangler::mangleType(const ObjCInterfaceType *T) {
+   mangleSourceName(T->getDecl()->getIdentifier());
+ }
+diff --git a/clang/lib/AST/MicrosoftMangle.cpp b/clang/lib/AST/MicrosoftMangle.cpp
+index adfe260a0d09..411d0af7a1eb 100644
+--- a/clang/lib/AST/MicrosoftMangle.cpp
++++ b/clang/lib/AST/MicrosoftMangle.cpp
+@@ -12,6 +12,7 @@
+ 
+ #include "clang/AST/ASTContext.h"
+ #include "clang/AST/Attr.h"
++#include "clang/AST/CXXMGTypeExpr.h"
+ #include "clang/AST/CXXInheritance.h"
+ #include "clang/AST/CharUnits.h"
+ #include "clang/AST/Decl.h"
+@@ -3864,6 +3865,12 @@ void MicrosoftCXXNameMangler::mangleType(const PackIndexingType *T,
+   mangleType(T->getSelectedType(), Range);
+ }
+ 
++void MicrosoftCXXNameMangler::mangleType(const CXXMGTypeExprType *T,
++                                         Qualifiers Quals,
++                                         SourceRange Range) {
++  llvm_unreachable("dependent C++MG type-expression type should not be mangled");
++}
++
+ void MicrosoftCXXNameMangler::mangleType(const TypeOfType *T, Qualifiers,
+                                          SourceRange Range) {
+   Error(Range.getBegin(), "typeof(type)") << Range;
+diff --git a/clang/lib/Sema/SemaCXXMGTypeExpr.cpp b/clang/lib/Sema/SemaCXXMGTypeExpr.cpp
+index b628f353e1ce..ee1cf38cb29c 100644
+--- a/clang/lib/Sema/SemaCXXMGTypeExpr.cpp
++++ b/clang/lib/Sema/SemaCXXMGTypeExpr.cpp
+@@ -12,6 +12,7 @@
+ #include "clang/AST/DeclCXX.h"
+ #include "clang/AST/ExprCXX.h"
+ #include "clang/AST/ExprCXXMG.h"
++#include "clang/AST/TypeLoc.h"
+ #include "clang/Basic/DiagnosticSema.h"
+ #include "clang/Sema/DeclSpec.h"
+ 
+@@ -327,7 +328,7 @@ public:
+         return Set;
+       }
+       Set.IsTrait = RD->isTrait();
+-      Set.Invalid = !collect(RD, Set.Members, TE.BeginLoc);
++      Set.Invalid = !collect(RD, Set.Members, TE->getBeginLoc());
+       return Set;
+     }
+ 
+@@ -607,6 +608,12 @@ TypeResult Sema::ActOnCXXMGTypeAliasExpression(
+ 
+   TypeSourceInfo *TSI =
+       Context.getTrivialTypeSourceInfo(Ty, Node->getBeginLoc());
++
++  if (auto TL = TSI->getTypeLoc().getAs<CXXMGTypeExprTypeLoc>()) {
++    TL.setBeginLoc(Node->getBeginLoc());
++    TL.setEndLoc(Node->getEndLoc());
++  }
++
+   return CreateParsedType(Ty, TSI);
+ }
+ 
+diff --git a/clang/lib/Sema/SemaTemplate.cpp b/clang/lib/Sema/SemaTemplate.cpp
+index 7228cc6ff402..b8bc3c545468 100644
+--- a/clang/lib/Sema/SemaTemplate.cpp
++++ b/clang/lib/Sema/SemaTemplate.cpp
+@@ -12,6 +12,7 @@
+ #include "clang/AST/ASTConcept.h"
+ #include "clang/AST/ASTConsumer.h"
+ #include "clang/AST/ASTContext.h"
++#include "clang/AST/CXXMGTypeExpr.h"
+ #include "clang/AST/Decl.h"
+ #include "clang/AST/DeclFriend.h"
+ #include "clang/AST/DeclTemplate.h"
+@@ -6254,6 +6255,7 @@ namespace {
+ 
+     bool VisitTagDecl(const TagDecl *Tag);
+     bool VisitNestedNameSpecifier(NestedNameSpecifier NNS);
++    bool VisitCXXMGTypeExprNode(const CXXMGTypeExprNode *Node);
+   };
+ } // end anonymous namespace
+ 
+@@ -6383,6 +6385,23 @@ bool UnnamedLocalNoLinkageFinder::VisitPackIndexingType(
+   return false;
+ }
+ 
++bool UnnamedLocalNoLinkageFinder::VisitCXXMGTypeExprNode(
++    const CXXMGTypeExprNode *Node) {
++  if (!Node)
++    return false;
++
++  if (Node->isOperand())
++    return Visit(Node->getOperandTypeSourceInfo()->getType());
++
++  return VisitCXXMGTypeExprNode(Node->getLHS()) ||
++         VisitCXXMGTypeExprNode(Node->getRHS());
++}
++
++bool UnnamedLocalNoLinkageFinder::VisitCXXMGTypeExprType(
++    const CXXMGTypeExprType *T) {
++  return VisitCXXMGTypeExprNode(T->getTypeExprNode());
++}
++
+ bool UnnamedLocalNoLinkageFinder::VisitUnaryTransformType(
+                                                     const UnaryTransformType*) {
+   return false;
+diff --git a/clang/lib/Sema/TreeTransform.h b/clang/lib/Sema/TreeTransform.h
+index b0652f58e6aa..4a4fd99f3071 100644
+--- a/clang/lib/Sema/TreeTransform.h
++++ b/clang/lib/Sema/TreeTransform.h
+@@ -7241,7 +7241,8 @@ QualType TreeTransform<Derived>::TransformCXXMGTypeExprType(
+   if (NewNode->isDependent() || NewNode->isInstantiationDependent()) {
+     QualType NewTy = getSema().Context.getCXXMGTypeExprType(NewNode);
+     auto NewTL = TLB.push<CXXMGTypeExprTypeLoc>(NewTy);
+-    NewTL.initialize(getSema().Context, NewNode->getBeginLoc());
++    NewTL.setBeginLoc(NewNode->getBeginLoc());
++    NewTL.setEndLoc(NewNode->getEndLoc());
+     return NewTy;
+   }
+ 
+diff --git a/clang/lib/Serialization/ASTReader.cpp b/clang/lib/Serialization/ASTReader.cpp
+index 65874047f157..9c1b7d27a32e 100644
+--- a/clang/lib/Serialization/ASTReader.cpp
++++ b/clang/lib/Serialization/ASTReader.cpp
+@@ -7821,6 +7821,11 @@ void TypeLocReader::VisitPredefinedSugarTypeLoc(PredefinedSugarTypeLoc TL) {
+   // Nothing to do.
+ }
+ 
++void TypeLocReader::VisitCXXMGTypeExprTypeLoc(CXXMGTypeExprTypeLoc TL) {
++  TL.setBeginLoc(readSourceLocation());
++  TL.setEndLoc(readSourceLocation());
++}
++
+ void ASTRecordReader::readTypeLoc(TypeLoc TL) {
+   TypeLocReader TLR(*this);
+   for (; !TL.isNull(); TL = TL.getNextTypeLoc())
+diff --git a/clang/lib/Serialization/ASTWriter.cpp b/clang/lib/Serialization/ASTWriter.cpp
+index 7b18d24036e4..c68c01da0a30 100644
+--- a/clang/lib/Serialization/ASTWriter.cpp
++++ b/clang/lib/Serialization/ASTWriter.cpp
+@@ -697,6 +697,11 @@ void TypeLocWriter::VisitPredefinedSugarTypeLoc(
+   // Nothing to do.
+ }
+ 
++void TypeLocWriter::VisitCXXMGTypeExprTypeLoc(CXXMGTypeExprTypeLoc TL) {
++  Record.AddSourceLocation(TL.getBeginLoc());
++  Record.AddSourceLocation(TL.getEndLoc());
++}
++
+ void ASTWriter::WriteTypeAbbrevs() {
+   using namespace llvm;
+ 
+-- 
+2.54.0
+

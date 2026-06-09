@@ -2,17 +2,15 @@
 from __future__ import annotations
 
 import os
-import re
 import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent / "scripts"))
-from clang_mg_common import (default_jobs, detect_target_triple, env_or_default, git, has_cmd,
-                             list_patch_features, parse_enabled, run, truthy,
-                             write_default_feature_config)
+from clang_mg_common import default_jobs, detect_target_triple, env_or_default, git, run, truthy
 
 
-def print_header(command: str, llvm_ref: str, llvm_dir: Path, target_triple: str, build_dir: Path, build_type: str, jobs: str) -> None:
+def print_header(command: str, llvm_ref: str, llvm_dir: Path, target_triple: str,
+                 build_dir: Path, build_type: str, jobs: str) -> None:
     print("=== clang-mg ===")
     print(f"Command:       {command}")
     print(f"LLVM ref:      {llvm_ref}")
@@ -29,34 +27,34 @@ def usage(root_dir: Path) -> None:
     print("  python build.py [command]")
     print()
     print("Commands:")
-    print("  bootstrap                  Clone/update LLVM if needed, apply all enabled patches, then build")
-    print("  install                    Clone/update LLVM, reset clean, apply all enabled patches, build, then add clang-mg to PATH")
-    print("  clone                      Clone LLVM only")
-    print("  update                     Update LLVM only if the checkout is clean")
-    print("  reset                      Reset LLVM checkout to LLVM_REF / origin ref")
-    print("  apply                      Apply all enabled clang-mg patches")
-    print("  apply <feature-name...>    Apply one or more specific feature patch stacks")
-    print("  enable <feature-name...>   Enable one or more feature patch stacks")
-    print("  disable <feature-name...>  Disable one or more feature patch stacks")
-    print("  build                      Build current LLVM tree only")
-    print("  fresh                      Reset LLVM, apply all enabled patches, then build")
-    print("  rebuild                    Same as fresh")
-    print("  save <feature-name>        Save current LLVM changes as patches for a feature")
-    print("  help                       Show this help menu")
+    print("  bootstrap            Clone/update LLVM if needed, apply the flat patch stack, then build")
+    print("  install              Clone/update LLVM, reset clean, apply the patch stack, build, then add clang-mg to PATH")
+    print("  clone                Clone LLVM only")
+    print("  update               Update LLVM only if the checkout is clean")
+    print("  reset                Reset LLVM checkout to LLVM_REF / origin ref")
+    print("  apply                Apply all top-level patches from patches/")
+    print("  refresh [start-ref]  Regenerate all top-level patches from start-ref..HEAD")
+    print("  save                 Save current LLVM working-tree changes as a new patch")
+    print("  build                Build current LLVM tree only")
+    print("  fresh                Reset LLVM, apply all patches, then build")
+    print("  rebuild              Same as fresh")
+    print("  help                 Show this help menu")
     print()
     print("Examples:")
     print("  python build.py")
     print("  python build.py bootstrap")
-    print("  python build.py install")
     print("  python build.py apply")
-    print("  python build.py apply change-bin-name")
-    print("  python build.py apply change-bin-name curlinclude")
-    print("  python build.py enable if-constexpr-members")
-    print("  python build.py disable curlinclude")
-    print("  python build.py enable core if-constexpr-members")
+    print("  python build.py save")
+    print("  python build.py refresh")
+    print("  python build.py refresh origin/main")
     print("  python build.py build")
     print("  python build.py fresh")
-    print("  python build.py save curlinclude")
+    print()
+    print("Patch workflow:")
+    print("  patches/*.patch is the canonical clang-mg patch stack.")
+    print("  apply   = apply every top-level patch in lexical order")
+    print("  save    = commit current LLVM changes and append one new patch")
+    print("  refresh = rewrite the whole flat patch stack from LLVM git history")
     print()
     print("Environment variables:")
     print("  LLVM_REF=main")
@@ -65,10 +63,10 @@ def usage(root_dir: Path) -> None:
     print(f"  LLVM_DIR={root_dir}/work/llvm-project")
     print("  BUILD_TARGET_TRIPLE=x86_64-pc-linux-gnu")
     print(f"  BUILD_DIR={root_dir}/work/build-$BUILD_TARGET_TRIPLE")
-    print("  BUILD_TYPE=Debug")
-    print("  JOBS=4")
-    print("  FEATURE_CONFIG_NAME=feature.conf")
+    print("  BUILD_TYPE=Release")
+    print("  JOBS=16")
     print("  INTERACTIVE=1")
+    print("  OLLAMA_MODEL=gemma3:4b")
 
 
 def test_llvm_repo(llvm_dir: Path) -> bool:
@@ -88,75 +86,6 @@ def require_llvm_repo(llvm_dir: Path) -> None:
         print("or:")
         print("  python build.py bootstrap")
         raise SystemExit(1)
-
-
-def ensure_feature_config(patch_root: Path, feature_config_name: str, feature_name: str) -> Path:
-    if not feature_name.strip():
-        print("ERROR: Missing feature name.")
-        print()
-        print("Usage:")
-        print("  python build.py enable <feature-name...>")
-        print("  python build.py disable <feature-name...>")
-        raise SystemExit(1)
-    feature_dir = patch_root / feature_name
-    config_file = feature_dir / feature_config_name
-    if not feature_dir.is_dir():
-        print("ERROR: Feature patch directory does not exist:")
-        print(f"  {feature_dir}")
-        print()
-        print("Available features:")
-        for f in list_patch_features(patch_root):
-            print(f"  {f}")
-        raise SystemExit(1)
-    if not config_file.is_file():
-        print("Generating missing config:")
-        print(f"  {config_file}")
-        write_default_feature_config(config_file, feature_name)
-    return config_file
-
-
-def set_feature_enabled(patch_root: Path, feature_config_name: str, feature_name: str, enabled_value: str) -> None:
-    config_file = ensure_feature_config(patch_root, feature_config_name, feature_name)
-    lines = config_file.read_text(encoding="utf-8", errors="replace").splitlines()
-    replaced = False
-    new_lines: list[str] = []
-    for line in lines:
-        if not replaced and re.match(r"^\s*ENABLED\s*=", line):
-            new_lines.append(f"ENABLED={enabled_value}")
-            replaced = True
-        else:
-            new_lines.append(line)
-    if not replaced:
-        new_lines.append("")
-        new_lines.append("# Whether this feature should be applied.")
-        new_lines.append(f"ENABLED={enabled_value}")
-    config_file.write_text("\n".join(new_lines) + "\n", encoding="utf-8")
-    if enabled_value == "1":
-        print(f"Enabled feature:  {feature_name}")
-    else:
-        print(f"Disabled feature: {feature_name}")
-    print("Config:")
-    print(f"  {config_file}")
-
-
-def run_set_feature_enabled(patch_root: Path, feature_config_name: str, enabled_value: str, feature_names: list[str]) -> None:
-    if not feature_names:
-        print("ERROR: Missing feature name.")
-        print()
-        if enabled_value == "1":
-            print("Usage:")
-            print("  python build.py enable <feature-name...>")
-        else:
-            print("Usage:")
-            print("  python build.py disable <feature-name...>")
-        print()
-        print("Available features:")
-        for f in list_patch_features(patch_root):
-            print(f"  {f}")
-        raise SystemExit(1)
-    for feature_name in feature_names:
-        set_feature_enabled(patch_root, feature_config_name, feature_name, enabled_value)
-        print()
 
 
 def run_clone(scripts_dir: Path, llvm_url: str, llvm_ref: str, llvm_dir: Path) -> None:
@@ -187,48 +116,39 @@ def run_apply_patches(root_dir: Path, scripts_dir: Path, llvm_dir: Path) -> None
     run([sys.executable, str(scripts_dir / "apply-patches.py"), str(root_dir), str(llvm_dir)])
 
 
-def run_apply_features(root_dir: Path, scripts_dir: Path, llvm_dir: Path, feature_names: list[str]) -> None:
+def run_refresh_patches(scripts_dir: Path, llvm_dir: Path, start_ref: str | None = None) -> None:
     require_llvm_repo(llvm_dir)
-    if not feature_names:
-        run_apply_patches(root_dir, scripts_dir, llvm_dir)
-        return
-    for feature_name in feature_names:
-        env = os.environ.copy()
-        env["LLVM_DIR"] = str(llvm_dir)
-        run([sys.executable, str(scripts_dir / "apply-feature.py"), feature_name], env=env)
+    args = [sys.executable, str(scripts_dir / "refresh-patches.py")]
+    if start_ref:
+        args.append(start_ref)
+    run(args, cwd=llvm_dir)
 
 
-def run_build(scripts_dir: Path, llvm_dir: Path, build_dir: Path, build_type: str, jobs: str, build_target_triple: str, interactive: bool) -> None:
+def run_save_patches(scripts_dir: Path, llvm_dir: Path) -> None:
     require_llvm_repo(llvm_dir)
+    run([sys.executable, str(scripts_dir / "save-patches.py")], cwd=llvm_dir)
+
+
+def run_build(scripts_dir: Path, llvm_dir: Path, build_dir: Path, build_type: str,
+              jobs: str, target_triple: str, interactive: bool) -> None:
+    require_llvm_repo(llvm_dir)
+    args = [
+        sys.executable,
+        str(scripts_dir / "build-llvm.py"),
+        str(llvm_dir),
+        str(build_dir),
+        build_type,
+        jobs,
+    ]
     env = os.environ.copy()
-    env["BUILD_TARGET_TRIPLE"] = build_target_triple
-    args = [sys.executable, str(scripts_dir / "build-llvm.py"), str(llvm_dir), str(build_dir), build_type, str(jobs)]
+    env["BUILD_TARGET_TRIPLE"] = target_triple
     if interactive:
-        args.append("--interactive")
+        env["INTERACTIVE"] = "1"
     run(args, env=env)
 
 
 def run_install_path(scripts_dir: Path, llvm_dir: Path, build_dir: Path) -> None:
-    require_llvm_repo(llvm_dir)
-    env = os.environ.copy()
-    env["BUILD_DIR"] = str(build_dir)
-    run([sys.executable, str(scripts_dir / "install-clang-mg.py"), str(build_dir)], env=env)
-
-
-def run_save_feature(scripts_dir: Path, llvm_dir: Path, llvm_ref: str, feature_name: str) -> None:
-    require_llvm_repo(llvm_dir)
-    if not feature_name.strip():
-        print("ERROR: Missing feature name.")
-        print()
-        print("Usage:")
-        print("  python build.py save <feature-name>")
-        print()
-        print("Example:")
-        print("  python build.py save curlinclude")
-        raise SystemExit(1)
-    cp = git(["-C", str(llvm_dir), "rev-parse", "--verify", f"origin/{llvm_ref}"], check=False, quiet=True)
-    base = f"origin/{llvm_ref}" if cp.returncode == 0 else llvm_ref
-    run([sys.executable, str(scripts_dir / "save-feature.py"), feature_name, base], cwd=llvm_dir)
+    run([sys.executable, str(scripts_dir / "install-clang-mg.py"), str(llvm_dir), str(build_dir)])
 
 
 def main(argv: list[str]) -> int:
@@ -243,8 +163,6 @@ def main(argv: list[str]) -> int:
     build_dir = Path(env_or_default("BUILD_DIR", work_dir / f"build-{build_target_triple}"))
     build_type = env_or_default("BUILD_TYPE", "Release")
     jobs = default_jobs()
-    patch_root = root_dir / "patches"
-    feature_config_name = env_or_default("FEATURE_CONFIG_NAME", "feature.conf")
 
     interactive = truthy(env_or_default("INTERACTIVE", "0"))
     filtered: list[str] = []
@@ -267,11 +185,28 @@ def main(argv: list[str]) -> int:
     elif command == "reset":
         run_reset(scripts_dir, llvm_dir, llvm_ref)
     elif command == "apply":
-        run_apply_features(root_dir, scripts_dir, llvm_dir, rest)
-    elif command == "enable":
-        run_set_feature_enabled(patch_root, feature_config_name, "1", rest)
-    elif command == "disable":
-        run_set_feature_enabled(patch_root, feature_config_name, "0", rest)
+        if rest:
+            print("ERROR: `apply` no longer accepts feature names.")
+            print("The new workflow applies every top-level patch in patches/.")
+            print()
+            usage(root_dir)
+            return 1
+        run_apply_patches(root_dir, scripts_dir, llvm_dir)
+    elif command == "refresh":
+        if len(rest) > 1:
+            print("ERROR: refresh accepts at most one optional start ref.")
+            print("Usage:")
+            print("  python build.py refresh [start-ref]")
+            return 1
+        run_refresh_patches(scripts_dir, llvm_dir, rest[0] if rest else None)
+    elif command == "save":
+        if rest:
+            print("ERROR: `save` no longer accepts a feature name.")
+            print("The new workflow saves one new patch into the flat patches/ stack.")
+            print()
+            usage(root_dir)
+            return 1
+        run_save_patches(scripts_dir, llvm_dir)
     elif command == "build":
         run_build(scripts_dir, llvm_dir, build_dir, build_type, jobs, build_target_triple, interactive)
     elif command == "bootstrap":
@@ -291,9 +226,10 @@ def main(argv: list[str]) -> int:
             run_reset(scripts_dir, llvm_dir, llvm_ref)
         run_apply_patches(root_dir, scripts_dir, llvm_dir)
         run_build(scripts_dir, llvm_dir, build_dir, build_type, jobs, build_target_triple, interactive)
-    elif command == "save":
-        feature_name = rest[0] if rest else ""
-        run_save_feature(scripts_dir, llvm_dir, llvm_ref, feature_name)
+    elif command in {"enable", "disable", "refresh-feature"}:
+        print(f"ERROR: `{command}` was removed by the flat patch-stack workflow.")
+        print("Use `python build.py apply`, `python build.py save`, or `python build.py refresh`.")
+        return 1
     else:
         print(f"ERROR: Unknown command: {command}")
         print()

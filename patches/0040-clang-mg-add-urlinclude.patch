@@ -38,7 +38,7 @@ index 383bf1a7fdb3..dda50c6e45ed 100644
  def err_pp_missing_macro_name : Error<"macro name missing">;
  def err_pp_missing_rparen_in_macro_def : Error<
 diff --git a/clang/include/clang/Basic/TokenKinds.def b/clang/include/clang/Basic/TokenKinds.def
-index f07d8ebb7503..e405554dc350 100644
+index 0d7bf62fded9..22ae3cf15eca 100644
 --- a/clang/include/clang/Basic/TokenKinds.def
 +++ b/clang/include/clang/Basic/TokenKinds.def
 @@ -115,6 +115,7 @@ PPKEYWORD(defined)
@@ -134,10 +134,10 @@ index db80eecce490..8dfbf3d91bc6 100644
    /// the buffers associated with remapped files.
    ///
 diff --git a/clang/include/clang/Options/Options.td b/clang/include/clang/Options/Options.td
-index 4fd892e58df8..8997f5dc92dc 100644
+index 62592da3eee1..6a8f593c5096 100644
 --- a/clang/include/clang/Options/Options.td
 +++ b/clang/include/clang/Options/Options.td
-@@ -3123,6 +3123,37 @@ defm gnu89_inline : BoolFOption<"gnu89-inline",
+@@ -3129,6 +3129,37 @@ defm gnu89_inline : BoolFOption<"gnu89-inline",
    NegFlag<SetFalse>>, ShouldParseIf<!strconcat("!", cplusplus.KeyPath)>;
  def fgnu_runtime : Flag<["-"], "fgnu-runtime">, Group<f_Group>,
    HelpText<"Generate output compatible with the standard GNU Objective-C runtime">;
@@ -176,10 +176,10 @@ index 4fd892e58df8..8997f5dc92dc 100644
  // -Wno-error=invalid-gnu-asm-cast, which is the only thing the flag used to
  // control.
 diff --git a/clang/lib/Basic/IdentifierTable.cpp b/clang/lib/Basic/IdentifierTable.cpp
-index a2e9316e4e37..e993303cf967 100644
+index 4f6c8ea04477..61435f62debd 100644
 --- a/clang/lib/Basic/IdentifierTable.cpp
 +++ b/clang/lib/Basic/IdentifierTable.cpp
-@@ -454,6 +454,7 @@ tok::PPKeywordKind IdentifierInfo::getPPKeywordID() const {
+@@ -456,6 +456,7 @@ tok::PPKeywordKind IdentifierInfo::getPPKeywordID() const {
  
    CASE( 8, 'e', 'i', elifndef);
    CASE( 8, 'u', 'a', unassert);
@@ -188,10 +188,10 @@ index a2e9316e4e37..e993303cf967 100644
  
    CASE(14, '_', 'p', __public_macro);
 diff --git a/clang/lib/Driver/ToolChains/Clang.cpp b/clang/lib/Driver/ToolChains/Clang.cpp
-index 8a0efd70e6c0..471aa9195941 100644
+index a5de770cfa7e..2a769adcfcf6 100644
 --- a/clang/lib/Driver/ToolChains/Clang.cpp
 +++ b/clang/lib/Driver/ToolChains/Clang.cpp
-@@ -6334,6 +6334,16 @@ void Clang::ConstructJob(Compilation &C, const JobAction &JA,
+@@ -6339,6 +6339,16 @@ void Clang::ConstructJob(Compilation &C, const JobAction &JA,
    }
    Args.AddLastArg(CmdArgs, options::OPT_P);
    Args.AddLastArg(CmdArgs, options::OPT_print_ivar_layout);
@@ -209,10 +209,10 @@ index 8a0efd70e6c0..471aa9195941 100644
    if (D.CCLogDiagnostics && !D.CCGenDiagnostics) {
      CmdArgs.push_back("-diagnostic-log-file");
 diff --git a/clang/lib/Frontend/CompilerInvocation.cpp b/clang/lib/Frontend/CompilerInvocation.cpp
-index 9fc695a74a3c..4204d2b66eda 100644
+index 1df45a3572df..4471df755d89 100644
 --- a/clang/lib/Frontend/CompilerInvocation.cpp
 +++ b/clang/lib/Frontend/CompilerInvocation.cpp
-@@ -4855,6 +4855,33 @@ static void GeneratePreprocessorArgs(const PreprocessorOptions &Opts,
+@@ -4860,6 +4860,33 @@ static void GeneratePreprocessorArgs(const PreprocessorOptions &Opts,
    for (const auto &EmbedEntry : Opts.EmbedEntries)
      GenerateArg(Consumer, OPT_embed_dir_EQ, EmbedEntry);
  
@@ -246,7 +246,7 @@ index 9fc695a74a3c..4204d2b66eda 100644
    // Don't handle LexEditorPlaceholders. It is implied by the action that is
    // generated elsewhere.
  }
-@@ -4941,6 +4968,36 @@ static bool ParsePreprocessorArgs(PreprocessorOptions &Opts, ArgList &Args,
+@@ -4946,6 +4973,36 @@ static bool ParsePreprocessorArgs(PreprocessorOptions &Opts, ArgList &Args,
      Opts.EmbedEntries.push_back(std::string(Val));
    }
  
@@ -284,10 +284,10 @@ index 9fc695a74a3c..4204d2b66eda 100644
    // preprocessor as we never want to emit the
    // "editor placeholder in source file" error in PP only mode.
 diff --git a/clang/lib/Frontend/InitPreprocessor.cpp b/clang/lib/Frontend/InitPreprocessor.cpp
-index 3f0468a93814..2a8f3b61cc4f 100644
+index 6656f2bd076c..70f105a0fd0b 100644
 --- a/clang/lib/Frontend/InitPreprocessor.cpp
 +++ b/clang/lib/Frontend/InitPreprocessor.cpp
-@@ -853,6 +853,8 @@ static void InitializePredefinedMacros(const TargetInfo &TI,
+@@ -859,6 +859,8 @@ static void InitializePredefinedMacros(const TargetInfo &TI,
    Builder.defineMacro("__clang_version__",
                        "\"" CLANG_VERSION_STRING " "
                        + getClangFullRepositoryVersion() + "\"");
@@ -317,10 +317,10 @@ index ede5d49860fa..20af021470af 100644
    case pp_include_next:
    case pp_import:
 diff --git a/clang/lib/Lex/Lexer.cpp b/clang/lib/Lex/Lexer.cpp
-index 2797212c229f..1a836824bcab 100644
+index f52b84a42ca7..87779e4a0d8f 100644
 --- a/clang/lib/Lex/Lexer.cpp
 +++ b/clang/lib/Lex/Lexer.cpp
-@@ -4722,6 +4722,7 @@ bool Lexer::LexDependencyDirectiveTokenWhileSkipping(Token &Result) {
+@@ -4742,6 +4742,7 @@ bool Lexer::LexDependencyDirectiveTokenWhileSkipping(Token &Result) {
      case pp_none:
        llvm_unreachable("unexpected 'pp_none'");
      case pp_include:
@@ -795,7 +795,7 @@ index f76155b1c45d..8f9acf2b7e2e 100644
      Kind = InclusionDirective::Import;
      break;
 diff --git a/clang/lib/Serialization/ASTReader.cpp b/clang/lib/Serialization/ASTReader.cpp
-index 74a7b51368c2..bb52ab1a9cd6 100644
+index 9c1b7d27a32e..7d11d1989f53 100644
 --- a/clang/lib/Serialization/ASTReader.cpp
 +++ b/clang/lib/Serialization/ASTReader.cpp
 @@ -7009,6 +7009,10 @@ PreprocessedEntity *ASTReader::ReadPreprocessedEntity(unsigned Index) {
@@ -810,10 +810,10 @@ index 74a7b51368c2..bb52ab1a9cd6 100644
      InclusionDirective::InclusionKind Kind
        = static_cast<InclusionDirective::InclusionKind>(Record[2]);
 diff --git a/clang/lib/Serialization/ASTWriter.cpp b/clang/lib/Serialization/ASTWriter.cpp
-index 6497c22a762a..0d46b911f11c 100644
+index 47f40117c92e..54cef301b382 100644
 --- a/clang/lib/Serialization/ASTWriter.cpp
 +++ b/clang/lib/Serialization/ASTWriter.cpp
-@@ -2835,7 +2835,7 @@ void ASTWriter::WritePreprocessorDetail(PreprocessingRecord &PPRec,
+@@ -2840,7 +2840,7 @@ void ASTWriter::WritePreprocessorDetail(PreprocessingRecord &PPRec,
      Abbrev->Add(BitCodeAbbrevOp(PPD_INCLUSION_DIRECTIVE));
      Abbrev->Add(BitCodeAbbrevOp(BitCodeAbbrevOp::Fixed, 32)); // filename length
      Abbrev->Add(BitCodeAbbrevOp(BitCodeAbbrevOp::Fixed, 1)); // in quotes

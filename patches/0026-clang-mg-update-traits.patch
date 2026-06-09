@@ -86,7 +86,7 @@ index 000000000000..ea1c89e8bcb7
 +
 +#endif
 diff --git a/clang/include/clang/AST/RecursiveASTVisitor.h b/clang/include/clang/AST/RecursiveASTVisitor.h
-index 6380212cbd26..a5b91503d27b 100644
+index 1d9b08dc08f2..36d6f520b576 100644
 --- a/clang/include/clang/AST/RecursiveASTVisitor.h
 +++ b/clang/include/clang/AST/RecursiveASTVisitor.h
 @@ -26,6 +26,7 @@
@@ -144,7 +144,7 @@ index 7a5883b45c53..88d6a8936550 100644
    void VisitExpressionTraitExpr(const ExpressionTraitExpr *Node);
    void VisitCXXDefaultArgExpr(const CXXDefaultArgExpr *Node);
 diff --git a/clang/include/clang/Basic/DiagnosticParseKinds.td b/clang/include/clang/Basic/DiagnosticParseKinds.td
-index e1e16343e7bb..f10fcd6ca039 100644
+index 05cd0e37e0a8..a69394abd2ad 100644
 --- a/clang/include/clang/Basic/DiagnosticParseKinds.td
 +++ b/clang/include/clang/Basic/DiagnosticParseKinds.td
 @@ -643,6 +643,10 @@ def err_cxxmg_trait_invalid_base_clause : Error<
@@ -159,7 +159,7 @@ index e1e16343e7bb..f10fcd6ca039 100644
    "missing '}' at end of definition of %q0">;
  def note_missing_end_of_definition_before : Note<
 diff --git a/clang/include/clang/Basic/DiagnosticSemaKinds.td b/clang/include/clang/Basic/DiagnosticSemaKinds.td
-index 758861ffb26d..2d2b79ddc02f 100644
+index a6cf2501bdfd..6101226f2c85 100644
 --- a/clang/include/clang/Basic/DiagnosticSemaKinds.td
 +++ b/clang/include/clang/Basic/DiagnosticSemaKinds.td
 @@ -7838,6 +7838,16 @@ def err_cxxmg_trait_special_member : Error<
@@ -204,7 +204,7 @@ index aec5d827ae11..0d7bf62fded9 100644
  KEYWORD(try                         , KEYCXX)
  KEYWORD(typename                    , KEYCXX)
 diff --git a/clang/include/clang/Parse/Parser.h b/clang/include/clang/Parse/Parser.h
-index 25d66866ca21..99085ea9769a 100644
+index 09f951e97415..a678fde7f7f0 100644
 --- a/clang/include/clang/Parse/Parser.h
 +++ b/clang/include/clang/Parse/Parser.h
 @@ -3559,6 +3559,10 @@ private:
@@ -348,7 +348,7 @@ index 6c3294573e9d..c9f2fd5d2618 100644
    OS << getTraitSpelling(E->getTrait()) << '(';
    E->getQueriedType().print(OS, Policy);
 diff --git a/clang/lib/AST/StmtProfile.cpp b/clang/lib/AST/StmtProfile.cpp
-index eb25e5260fd1..a0636a95e2ec 100644
+index 22e2cc56bc70..f8597dc441df 100644
 --- a/clang/lib/AST/StmtProfile.cpp
 +++ b/clang/lib/AST/StmtProfile.cpp
 @@ -16,6 +16,7 @@
@@ -359,7 +359,7 @@ index eb25e5260fd1..a0636a95e2ec 100644
  #include "clang/AST/ExprObjC.h"
  #include "clang/AST/ExprOpenMP.h"
  #include "clang/AST/ODRHash.h"
-@@ -2280,6 +2281,15 @@ void StmtProfiler::VisitTypeTraitExpr(const TypeTraitExpr *S) {
+@@ -2294,6 +2295,15 @@ void StmtProfiler::VisitTypeTraitExpr(const TypeTraitExpr *S) {
      VisitType(S->getArg(I)->getType());
  }
  
@@ -952,7 +952,7 @@ index 000000000000..cfba2c41a15d
 +  return CXXBoolLiteralExpr::Create(Context, Result, Context.BoolTy, OpLoc);
 +}
 diff --git a/clang/lib/Sema/TreeTransform.h b/clang/lib/Sema/TreeTransform.h
-index 77c8f17439a1..d1ca368771c3 100644
+index 53107c827006..3fc0e0e1dfe5 100644
 --- a/clang/lib/Sema/TreeTransform.h
 +++ b/clang/lib/Sema/TreeTransform.h
 @@ -20,6 +20,7 @@
@@ -971,7 +971,7 @@ index 77c8f17439a1..d1ca368771c3 100644
    TemplateParameterList *TransformTemplateParameterList(
          TemplateParameterList *TPL) {
      return TPL;
-@@ -15346,6 +15346,24 @@ TreeTransform<Derived>::TransformTypeTraitExpr(TypeTraitExpr *E) {
+@@ -15358,6 +15358,24 @@ TreeTransform<Derived>::TransformTypeTraitExpr(TypeTraitExpr *E) {
                                         E->getEndLoc());
  }
  

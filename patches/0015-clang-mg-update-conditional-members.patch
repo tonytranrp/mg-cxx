@@ -180,7 +180,7 @@ index 000000000000..3092e259deaa
 +#endif // LLVM_CLANG_AST_DECLCXXMG_H
 \ No newline at end of file
 diff --git a/clang/include/clang/AST/RecursiveASTVisitor.h b/clang/include/clang/AST/RecursiveASTVisitor.h
-index 3b9bafffe1bc..64cd19bcd58b 100644
+index ac100a2b67fa..1949f8fc1db2 100644
 --- a/clang/include/clang/AST/RecursiveASTVisitor.h
 +++ b/clang/include/clang/AST/RecursiveASTVisitor.h
 @@ -2507,6 +2507,16 @@ DEF_TRAVERSE_DECL(ImplicitConceptSpecializationDecl, {
