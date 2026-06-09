@@ -168,6 +168,7 @@ def apply_ordered_features(root_dir: Path, llvm_dir: Path, ordered_features: lis
         print(f"Applying feature: {feature_name}")
         env = os.environ.copy()
         env["LLVM_DIR"] = str(llvm_dir)
+        env["REFRESH_PATCHES"] = "0"
         run([sys.executable, str(apply_feature_script), feature_name], env=env)
 
 

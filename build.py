@@ -8,7 +8,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent / "scripts"))
 from clang_mg_common import (default_jobs, detect_target_triple, env_or_default, git, has_cmd,
-                             list_patch_features, parse_enabled, run, truthy,
+                             list_patch_features, parse_enabled, read_feature_config, run, truthy,
                              write_default_feature_config)
 
 
@@ -36,6 +36,7 @@ def usage(root_dir: Path) -> None:
     print("  reset                      Reset LLVM checkout to LLVM_REF / origin ref")
     print("  apply                      Apply all enabled clang-mg patches")
     print("  apply <feature-name...>    Apply one or more specific feature patch stacks")
+    print("  refresh-feature <feature>  Reset, apply this feature's dependencies, apply the feature, then refresh its patches")
     print("  enable <feature-name...>   Enable one or more feature patch stacks")
     print("  disable <feature-name...>  Disable one or more feature patch stacks")
     print("  build                      Build current LLVM tree only")
@@ -51,6 +52,7 @@ def usage(root_dir: Path) -> None:
     print("  python build.py apply")
     print("  python build.py apply change-bin-name")
     print("  python build.py apply change-bin-name curlinclude")
+    print("  python build.py refresh-feature traits")
     print("  python build.py enable if-constexpr-members")
     print("  python build.py disable curlinclude")
     print("  python build.py enable core if-constexpr-members")
@@ -195,7 +197,95 @@ def run_apply_features(root_dir: Path, scripts_dir: Path, llvm_dir: Path, featur
     for feature_name in feature_names:
         env = os.environ.copy()
         env["LLVM_DIR"] = str(llvm_dir)
+        env["REFRESH_PATCHES"] = "0"
         run([sys.executable, str(scripts_dir / "apply-feature.py"), feature_name], env=env)
+
+
+def collect_feature_dependency_order(patch_root: Path, feature_config_name: str, feature_name: str) -> list[str]:
+    """Return recursive DEPENDS order followed by feature_name.
+
+    This intentionally ignores ENABLED. Refreshing a feature should use the
+    feature's declared prerequisites even if the user currently has those
+    features disabled for normal apply-all builds.
+    """
+    ordered: list[str] = []
+    visited: set[str] = set()
+    visiting: set[str] = set()
+
+    def visit(name: str) -> None:
+        if name in visited:
+            return
+        if name in visiting:
+            cycle = " -> ".join([*visiting, name])
+            print("ERROR: Dependency cycle detected while resolving refresh order.")
+            print(f"  {cycle}")
+            raise SystemExit(1)
+        feature_dir = patch_root / name
+        if not feature_dir.is_dir():
+            print("ERROR: Feature patch directory does not exist:")
+            print(f"  {feature_dir}")
+            print()
+            print("Available features:")
+            for f in list_patch_features(patch_root):
+                print(f"  {f}")
+            raise SystemExit(1)
+        config_file = ensure_feature_config(patch_root, feature_config_name, name)
+        cfg = read_feature_config(config_file)
+        visiting.add(name)
+        for dep in list(cfg["depends"]):  # type: ignore[index]
+            dep_name = str(dep).strip()
+            if dep_name:
+                visit(dep_name)
+        visiting.remove(name)
+        visited.add(name)
+        ordered.append(name)
+
+    visit(feature_name)
+    return ordered
+
+
+def run_refresh_feature(root_dir: Path, scripts_dir: Path, llvm_dir: Path, llvm_ref: str,
+                        patch_root: Path, feature_config_name: str, feature_name: str) -> None:
+    require_llvm_repo(llvm_dir)
+    if not feature_name.strip():
+        print("ERROR: Missing feature name.")
+        print()
+        print("Usage:")
+        print("  python build.py refresh-feature <feature-name>")
+        print()
+        print("Available features:")
+        for f in list_patch_features(patch_root):
+            print(f"  {f}")
+        raise SystemExit(1)
+
+    ordered = collect_feature_dependency_order(patch_root, feature_config_name, feature_name)
+    dependencies = ordered[:-1]
+
+    print("=== refresh feature plan ===")
+    print(f"Feature: {feature_name}")
+    print("Action:  reset LLVM, apply declared dependencies without refreshing, then apply this feature with refresh enabled")
+    print()
+    if dependencies:
+        print("Dependency apply order:")
+        for dep in dependencies:
+            print(f"  {dep}")
+    else:
+        print("Dependency apply order:")
+        print("  none")
+    print()
+
+    run_reset(scripts_dir, llvm_dir, llvm_ref)
+
+    for dep in dependencies:
+        env = os.environ.copy()
+        env["LLVM_DIR"] = str(llvm_dir)
+        env["REFRESH_PATCHES"] = "0"
+        run([sys.executable, str(scripts_dir / "apply-feature.py"), dep], env=env)
+
+    env = os.environ.copy()
+    env["LLVM_DIR"] = str(llvm_dir)
+    env["REFRESH_PATCHES"] = "1"
+    run([sys.executable, str(scripts_dir / "apply-feature.py"), feature_name], env=env)
 
 
 def run_build(scripts_dir: Path, llvm_dir: Path, build_dir: Path, build_type: str, jobs: str, build_target_triple: str, interactive: bool) -> None:
@@ -268,6 +358,9 @@ def main(argv: list[str]) -> int:
         run_reset(scripts_dir, llvm_dir, llvm_ref)
     elif command == "apply":
         run_apply_features(root_dir, scripts_dir, llvm_dir, rest)
+    elif command == "refresh-feature":
+        feature_name = rest[0] if rest else ""
+        run_refresh_feature(root_dir, scripts_dir, llvm_dir, llvm_ref, patch_root, feature_config_name, feature_name)
     elif command == "enable":
         run_set_feature_enabled(patch_root, feature_config_name, "1", rest)
     elif command == "disable":

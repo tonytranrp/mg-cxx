@@ -5,11 +5,10 @@ import os
 import shutil
 import subprocess
 import sys
-import tempfile
 from pathlib import Path
 
 from clang_mg_common import (env_or_default, git, git_in_progress_paths, git_output, is_windows,
-                             root_from_script, timestamp)
+                             root_from_script, run)
 
 
 def usage(llvm_dir: Path, work_dir: Path, refresh_patches: str) -> None:
@@ -24,12 +23,13 @@ def usage(llvm_dir: Path, work_dir: Path, refresh_patches: str) -> None:
     print("Environment variables:")
     print(f"  LLVM_DIR={llvm_dir}")
     print(f"  WORK_DIR={work_dir}")
-    print(f"  REFRESH_PATCHES={refresh_patches}")
+    print(f"  REFRESH_PATCHES={refresh_patches}  # set to 1 to refresh this feature after a successful apply")
     print()
     print("Conflict workflow:")
     print("  If git am hits a conflict, this script will pause.")
     print("  Resolve the conflict, run git add on the fixed files, then choose continue.")
-    print("  After all patches apply, the feature patch directory is refreshed automatically.")
+    print("  By default, applying patches does not rewrite the patch directory.")
+    print("  Set REFRESH_PATCHES=1 only when applying this feature on top of its intended dependencies.")
 
 
 def show_features(root_dir: Path) -> None:
@@ -204,50 +204,31 @@ def read_apply_feature_state(state_file: Path) -> dict[str, str]:
     return state
 
 
-def refresh_feature_patches(root_dir: Path, patch_dir: Path, feature_name: str, start_commit: str, refresh_patches: str) -> None:
+def maybe_refresh_feature_patches(root_dir: Path, llvm_dir: Path, feature_name: str, start_commit: str, refresh_patches: str) -> None:
     if refresh_patches != "1":
         print()
         print(f"Skipping patch refresh because REFRESH_PATCHES={refresh_patches}")
+        print("Run this explicitly when you want to rewrite a feature patch stack:")
+        print(f"  ./build.py refresh-feature {feature_name}")
         return
 
     print()
     print("Refreshing feature patches from applied commits...")
-    tmp_dir = Path(tempfile.mkdtemp(prefix=f".patch-refresh-{feature_name}.", dir=str(root_dir)))
-    try:
-        cp = git(["format-patch", "--zero-commit", "--no-stat", "--output-directory", str(tmp_dir), f"{start_commit}..HEAD"], check=False, quiet=True)
-        if cp.returncode != 0:
-            print("ERROR: Failed to regenerate patches.")
-            raise SystemExit(1)
-        regenerated = sorted(tmp_dir.glob("*.patch"))
-        if not regenerated:
-            print("ERROR: No regenerated patches were produced.")
-            raise SystemExit(1)
-
-        backup_dir = Path(str(patch_dir) + f".backup.{timestamp()}")
-        backup_dir.mkdir(parents=True, exist_ok=True)
-        for p in sorted(patch_dir.glob("*.patch")):
-            shutil.copy2(p, backup_dir / p.name)
-        for p in sorted(patch_dir.glob("*.patch")):
-            p.unlink()
-        for p in regenerated:
-            shutil.copy2(p, patch_dir / p.name)
-
-        print()
-        print("Updated patch collection:")
-        print(f"  {patch_dir}")
-        print()
-        print("Backup of old patches:")
-        print(f"  {backup_dir}")
-    finally:
-        shutil.rmtree(tmp_dir, ignore_errors=True)
-
+    refresh_script = root_dir / "scripts" / "refresh-feature.py"
+    if not refresh_script.is_file():
+        print("ERROR: refresh-feature Python script not found:")
+        print(f"  {refresh_script}")
+        raise SystemExit(1)
+    env = os.environ.copy()
+    env["LLVM_DIR"] = str(llvm_dir)
+    run([sys.executable, str(refresh_script), feature_name, start_commit], cwd=llvm_dir, env=env)
 
 def main(argv: list[str]) -> int:
     root_dir = root_from_script(__file__)
     work_dir = Path(env_or_default("WORK_DIR", root_dir / "work"))
     llvm_dir = Path(env_or_default("LLVM_DIR", work_dir / "llvm-project"))
     feature_name = argv[0] if argv else ""
-    refresh_patches = env_or_default("REFRESH_PATCHES", "1")
+    refresh_patches = env_or_default("REFRESH_PATCHES", "0")
 
     if feature_name in {"-h", "--help", ""}:
         usage(llvm_dir, work_dir, refresh_patches)
@@ -320,12 +301,12 @@ def main(argv: list[str]) -> int:
             resume_state = read_apply_feature_state(state_file)
             start = resume_state.get("START", "").strip()
             if start:
-                refresh_feature_patches(root_dir, patch_dir, feature_name, start, refresh_patches)
+                maybe_refresh_feature_patches(root_dir, Path.cwd(), feature_name, start, refresh_patches)
             else:
                 print()
                 print("Skipping automatic patch refresh because this git am session was started before the script recorded its start commit.")
                 print("After confirming the result, you can refresh this feature with:")
-                print(f"  ./build.py save {feature_name}")
+                print(f"  ./build.py refresh-feature {feature_name}")
             state_file.unlink(missing_ok=True)
             print()
             print("Recent commits:")
@@ -376,7 +357,7 @@ def main(argv: list[str]) -> int:
 
         print()
         print(f"Applied feature successfully: {feature_name}")
-        refresh_feature_patches(root_dir, patch_dir, feature_name, start_commit, refresh_patches)
+        maybe_refresh_feature_patches(root_dir, Path.cwd(), feature_name, start_commit, refresh_patches)
         state_file.unlink(missing_ok=True)
         print()
         print("Recent commits:")
