@@ -258,33 +258,27 @@ def run_refresh_feature(root_dir: Path, scripts_dir: Path, llvm_dir: Path, llvm_
             print(f"  {f}")
         raise SystemExit(1)
 
-    ordered = collect_feature_dependency_order(patch_root, feature_config_name, feature_name)
-    dependencies = ordered[:-1]
+    feature_dir = patch_root / feature_name
+    if not feature_dir.is_dir():
+        print("ERROR: Feature patch directory does not exist:")
+        print(f"  {feature_dir}")
+        print()
+        print("Available features:")
+        for f in list_patch_features(patch_root):
+            print(f"  {f}")
+        raise SystemExit(1)
 
     print("=== refresh feature plan ===")
     print(f"Feature: {feature_name}")
-    print("Action:  reset LLVM, apply declared dependencies without refreshing, then apply this feature with refresh enabled")
-    print()
-    if dependencies:
-        print("Dependency apply order:")
-        for dep in dependencies:
-            print(f"  {dep}")
-    else:
-        print("Dependency apply order:")
-        print("  none")
+    print("Action:  reset LLVM, let apply-feature apply missing dependencies, then refresh this feature")
     print()
 
     run_reset(scripts_dir, llvm_dir, llvm_ref)
 
-    for dep in dependencies:
-        env = os.environ.copy()
-        env["LLVM_DIR"] = str(llvm_dir)
-        env["REFRESH_PATCHES"] = "0"
-        run([sys.executable, str(scripts_dir / "apply-feature.py"), dep], env=env)
-
     env = os.environ.copy()
     env["LLVM_DIR"] = str(llvm_dir)
     env["REFRESH_PATCHES"] = "1"
+    env["APPLY_FEATURE_DEPS"] = "1"
     run([sys.executable, str(scripts_dir / "apply-feature.py"), feature_name], env=env)
 
 

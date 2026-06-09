@@ -4,7 +4,6 @@ from __future__ import annotations
 import os
 import sys
 from pathlib import Path
-from collections import deque
 
 from clang_mg_common import (env_or_default, git, git_output, is_ignored_patch_dir_name,
                              parse_enabled, read_feature_config, root_from_script, run,
@@ -58,14 +57,18 @@ def load_feature_configs(patch_root: Path, feature_config_name: str):
     return features, feature_dirs_by_name, feature_has_patches, feature_enabled, feature_deps, feature_before
 
 
-def build_feature_order(features: list[str], feature_dirs_by_name: dict[str, Path], feature_has_patches: dict[str, int],
-                        feature_enabled: dict[str, int], feature_deps: dict[str, list[str]],
-                        feature_before: dict[str, list[str]]) -> list[str]:
-    enabled_features: list[str] = []
-    enabled_feature_map: set[str] = set()
-    in_degree: dict[str, int] = {}
-    edges: dict[str, list[str]] = {}
+def enabled_feature_order(features: list[str], feature_dirs_by_name: dict[str, Path], feature_has_patches: dict[str, int],
+                          feature_enabled: dict[str, int], feature_deps: dict[str, list[str]],
+                          feature_before: dict[str, list[str]]) -> list[str]:
+    """Return a stable order for enabled features.
 
+    apply-feature.py is responsible for applying missing DEPENDS recursively and
+    checking whether dependency patches already exist in git history. This order
+    only keeps enabled-feature output predictable and preserves BEFORE ordering
+    when both sides are enabled.
+    """
+    enabled: list[str] = []
+    enabled_set: set[str] = set()
     for feature in features:
         if feature_has_patches[feature] != 1:
             print(f"Skipping feature with no .patch files: {feature}")
@@ -73,69 +76,60 @@ def build_feature_order(features: list[str], feature_dirs_by_name: dict[str, Pat
         if feature_enabled[feature] != 1:
             print(f"Skipping disabled feature: {feature}")
             continue
-        enabled_features.append(feature)
-        enabled_feature_map.add(feature)
-        in_degree[feature] = 0
-        edges[feature] = []
+        enabled.append(feature)
+        enabled_set.add(feature)
 
-    def validate_dependency(feature: str, dep: str) -> None:
-        if dep not in feature_dirs_by_name:
-            print(f"ERROR: Feature '{feature}' depends on unknown feature '{dep}'.")
-            print()
-            print("Known features:")
-            for known in features:
-                print(f"  {known}")
-            raise SystemExit(1)
-        if feature_has_patches[dep] != 1:
-            fail(f"ERROR: Feature '{feature}' depends on '{dep}', but '{dep}' has no .patch files.")
-        if feature_enabled[dep] != 1:
-            print(f"ERROR: Feature '{feature}' depends on '{dep}', but '{dep}' is disabled.")
-            print()
-            print(f"Either enable '{dep}' or disable '{feature}'.")
-            raise SystemExit(1)
+    in_degree: dict[str, int] = {feature: 0 for feature in enabled}
+    edges: dict[str, list[str]] = {feature: [] for feature in enabled}
 
     def add_edge(src: str, dst: str) -> None:
-        edges.setdefault(src, []).append(dst)
-        in_degree[dst] = in_degree.get(dst, 0) + 1
+        if src == dst:
+            return
+        if dst not in edges.setdefault(src, []):
+            edges[src].append(dst)
+            in_degree[dst] = in_degree.get(dst, 0) + 1
 
-    for feature in enabled_features:
+    for feature in enabled:
         for dep in feature_deps.get(feature, []):
-            if not dep.strip():
+            dep = dep.strip()
+            if not dep:
                 continue
-            validate_dependency(feature, dep)
-            add_edge(dep, feature)
+            if dep not in feature_dirs_by_name:
+                print(f"ERROR: Feature '{feature}' depends on unknown feature '{dep}'.")
+                print()
+                print("Known features:")
+                for known in features:
+                    print(f"  {known}")
+                raise SystemExit(1)
+            if dep in enabled_set:
+                add_edge(dep, feature)
         for before in feature_before.get(feature, []):
-            if not before.strip():
+            before = before.strip()
+            if not before:
                 continue
             if before not in feature_dirs_by_name:
                 fail(f"ERROR: Feature '{feature}' has BEFORE entry for unknown feature '{before}'.")
-            if before not in enabled_feature_map:
-                print(f"NOTE: '{feature}' says it should run before '{before}', but '{before}' is not enabled. Ignoring.")
-                continue
-            add_edge(feature, before)
+            if before in enabled_set:
+                add_edge(feature, before)
 
-    queue: list[str] = sorted([f for f in enabled_features if in_degree[f] == 0])
+    queue = sorted([feature for feature in enabled if in_degree[feature] == 0])
     ordered: list[str] = []
     while queue:
         feature = queue.pop(0)
         ordered.append(feature)
-        for nxt in edges.get(feature, []):
+        for nxt in sorted(edges.get(feature, [])):
             in_degree[nxt] -= 1
             if in_degree[nxt] == 0:
                 queue.append(nxt)
                 queue.sort()
 
-    if len(ordered) != len(enabled_features):
-        print("ERROR: Dependency cycle detected between enabled features.")
+    if len(ordered) != len(enabled):
+        print("ERROR: Dependency/BEFORE cycle detected between enabled features.")
         print()
         print("Features still blocked:")
-        remaining = False
-        for feature in enabled_features:
-            if in_degree[feature] > 0:
+        for feature in enabled:
+            if in_degree.get(feature, 0) > 0:
                 print(f"  {feature}")
-                remaining = True
-        if not remaining:
-            print("  unknown")
         raise SystemExit(1)
     return ordered
 
@@ -160,8 +154,9 @@ def apply_ordered_features(root_dir: Path, llvm_dir: Path, ordered_features: lis
     if not ordered_features:
         print("  No enabled feature patch directories found.")
         return
-    for f in ordered_features:
-        print(f"  {f}")
+    for feature in ordered_features:
+        print(f"  {feature}")
+
     apply_feature_script = root_dir / "scripts" / "apply-feature.py"
     for feature_name in ordered_features:
         print()
@@ -216,7 +211,7 @@ def main(argv: list[str]) -> int:
             print("Apply cancelled.")
             return 1
         features, fdirs, has_patches, enabled, deps, before = load_feature_configs(patch_root, feature_config_name)
-        ordered = build_feature_order(features, fdirs, has_patches, enabled, deps, before)
+        ordered = enabled_feature_order(features, fdirs, has_patches, enabled, deps, before)
         apply_loose_patches(patch_root)
         apply_ordered_features(root_dir, llvm_dir, ordered)
         print()
