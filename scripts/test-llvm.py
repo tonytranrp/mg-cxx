@@ -6,6 +6,7 @@ import re
 import shlex
 import shutil
 import sys
+import textwrap
 from pathlib import Path
 
 from clang_mg_common import default_jobs, detect_target_triple, has_cmd, is_windows, run
@@ -27,9 +28,11 @@ def show_usage(script_name: str) -> None:
     print("Path matching is case-insensitive by component, so `clang cxxmg` resolves to `clang/test/CXXMG`.")
     print()
     print("Environment variables:")
-    print("  CLANG_MG_TEST_BIN_DIR=<dir>   Preferred directory for llvm-lit and test tools")
-    print("  CLANG_MG_LIT_OPTS='-v'      Extra arguments passed to llvm-lit")
-    print("  LIT_OPTS='-v'               Extra options parsed by lit itself")
+    print("  CLANG=<path>                 Override compiler used by LLVM lit substitutions")
+    print("  CLANG_MG_TEST_BIN_DIR=<dir>  Preferred directory for llvm-lit and test tools")
+    print("  CLANG_MG_LIT_OPTS='-v'       Extra arguments passed to llvm-lit")
+    print("  CLANG_MG_USE_UPSTREAM_LIT=1     Use upstream clang/test lit.cfg.py even for CXXMG subsets")
+    print("  LIT_OPTS='-v'                Extra options parsed by lit itself")
     print("  BUILD_TARGET_TRIPLE=...     Used only when this script must configure a missing build")
     print("  LLVM_ENABLE_PROJECTS=clang  Used only when this script must configure a missing build")
 
@@ -210,17 +213,7 @@ def preferred_tool_bin_dirs(build_dir: Path) -> list[Path]:
     return dirs
 
 
-def env_with_preferred_tools(build_dir: Path) -> dict[str, str]:
-    env = os.environ.copy()
-    existing = env.get("PATH", "")
-    prefix = [str(directory) for directory in preferred_tool_bin_dirs(build_dir) if directory.is_dir()]
-    if prefix:
-        env["PATH"] = os.pathsep.join(prefix + ([existing] if existing else []))
-    return env
-
-
-def find_executable(base_name: str, build_dir: Path) -> Path | None:
-    env = env_with_preferred_tools(build_dir)
+def find_executable_with_path(base_name: str, build_dir: Path, path_value: str | None = None, *, include_path: bool = True) -> Path | None:
     for directory in preferred_tool_bin_dirs(build_dir):
         if not directory.is_dir():
             continue
@@ -229,11 +222,60 @@ def find_executable(base_name: str, build_dir: Path) -> Path | None:
             if candidate.is_file():
                 return candidate
 
+    if not include_path:
+        return None
+
+    search_path = os.environ.get("PATH", "") if path_value is None else path_value
     for name in executable_names(base_name):
-        found = shutil.which(name, path=env.get("PATH"))
+        found = shutil.which(name, path=search_path)
         if found:
             return Path(found)
     return None
+
+
+def configure_lit_clang_environment(env: dict[str, str], build_dir: Path) -> None:
+    # LLVM's lit config intentionally allows CLANG to override the executable
+    # used for %clang/%clang_cc1/%clangxx. Honor an explicit user override.
+    if env.get("CLANG", "").strip():
+        return
+
+    search_path = env.get("PATH", os.environ.get("PATH", ""))
+
+    # This runner is for the clang-mg fork, so prefer the installed clang-mg
+    # tools over upstream-named tools. Do not synthesize a clang wrapper: pass
+    # lit the real executable that was selected.
+    preferred_names = ("clang-mg++", "clang-mg", "clang")
+
+    # First search only the clang-mg/LLVM tool directories. This keeps test runs
+    # anchored to work/<triple>/bin whenever the installed fork tools are there,
+    # with the build tree's bin directory as the next configured-tree fallback.
+    for name in preferred_names:
+        candidate = find_executable_with_path(name, build_dir, search_path, include_path=False)
+        if candidate is not None:
+            env["CLANG"] = str(candidate)
+            return
+
+    # Last resort: search PATH with the same fork-first order.
+    for name in preferred_names:
+        candidate = find_executable_with_path(name, build_dir, search_path, include_path=True)
+        if candidate is not None:
+            env["CLANG"] = str(candidate)
+            return
+
+
+def env_with_preferred_tools(build_dir: Path) -> dict[str, str]:
+    env = os.environ.copy()
+    existing = env.get("PATH", "")
+    prefix = [str(directory) for directory in preferred_tool_bin_dirs(build_dir) if directory.is_dir()]
+    if prefix:
+        env["PATH"] = os.pathsep.join(prefix + ([existing] if existing else []))
+    configure_lit_clang_environment(env, build_dir)
+    return env
+
+
+def find_executable(base_name: str, build_dir: Path) -> Path | None:
+    env = env_with_preferred_tools(build_dir)
+    return find_executable_with_path(base_name, build_dir, env.get("PATH"))
 
 
 def command_for_executable(path: Path) -> list[str]:
@@ -279,6 +321,42 @@ def available_build_targets(build_dir: Path) -> set[str]:
         if re.match(r"^[A-Za-z0-9_.+\-/]+$", stripped):
             targets.add(stripped)
     return targets
+
+
+def build_minimal_clang_mg_test_targets(build_dir: Path, build_type: str, jobs: str) -> None:
+    """Build only the tools needed by the clang-mg focused lit suite.
+
+    This intentionally avoids clang-test-depends because upstream clang/test/lit.cfg.py
+    can run global clang-repl feature probes before any focused CXXMG test executes.
+    Those probes are unrelated to clang-mg language tests and can be very expensive
+    or hang on some machines.
+    """
+    targets = available_build_targets(build_dir)
+    wanted: list[str] = []
+
+    def maybe_add(name: str) -> None:
+        if not targets or name in targets:
+            if name not in wanted:
+                wanted.append(name)
+
+    for name in (
+        "clang",
+        "clang-resource-headers",
+        "FileCheck",
+        "not",
+        "count",
+        "split-file",
+    ):
+        maybe_add(name)
+
+    if not wanted:
+        raise SystemExit(
+            f"ERROR: Could not find minimal Clang test build targets in {build_dir}.\n"
+            "Make sure this is a configured LLVM build directory."
+        )
+
+    for target in wanted:
+        cmake_build(build_dir, build_type, jobs, target)
 
 
 def build_required_subset_targets(build_dir: Path, build_type: str, jobs: str, project: str) -> None:
@@ -343,14 +421,159 @@ def find_llvm_lit_command(build_dir: Path) -> list[str]:
         "Build the project test dependencies first, or set CLANG_MG_TEST_BIN_DIR to the directory containing llvm-lit."
     )
 
+
+def is_truthy_env(name: str) -> bool:
+    return os.environ.get(name, "").strip().lower() in {"1", "true", "yes", "on", "enabled"}
+
+
+def tests_are_under(path_root: Path, test_paths: list[Path]) -> bool:
+    root = path_root.resolve()
+    for path in test_paths:
+        try:
+            path.resolve().relative_to(root)
+        except ValueError:
+            return False
+    return True
+
+
+def should_use_minimal_clang_mg_lit(project: str, project_test_dir: Path, resolved_tests: list[Path]) -> bool:
+    if project.lower() != "clang":
+        return False
+    if is_truthy_env("CLANG_MG_USE_UPSTREAM_LIT"):
+        return False
+    cxxmg_root = project_test_dir / "CXXMG"
+    if not cxxmg_root.is_dir():
+        return False
+    return tests_are_under(cxxmg_root, resolved_tests)
+
+
+def escape_lit_string(value: str) -> str:
+    # repr() is sufficient for Python string literals in the generated lit config.
+    return repr(value)
+
+
+def selected_clang_for_lit(build_dir: Path) -> str:
+    env = env_with_preferred_tools(build_dir)
+    clang = env.get("CLANG", "").strip()
+    if not clang:
+        raise SystemExit(
+            "ERROR: Could not find clang-mg++, clang-mg, or clang for lit.\n"
+            "Build clang first or set CLANG to the compiler executable to use."
+        )
+    return clang
+
+
+def create_minimal_clang_mg_lit_suite(build_dir: Path, source_cxxmg_dir: Path) -> Path:
+    suite_dir = build_dir / "test" / "clang-mg-lit" / "CXXMG"
+    suite_dir.mkdir(parents=True, exist_ok=True)
+
+    # Put the minimal config directly inside the synthetic CXXMG root. Tests are
+    # exposed through a symlink named "src" so lit never walks up to clang/test
+    # and therefore never loads upstream clang/test/lit.cfg.py.
+    src_link = suite_dir / "src"
+    if src_link.exists() or src_link.is_symlink():
+        if src_link.is_symlink() or src_link.is_file():
+            src_link.unlink()
+        elif src_link.is_dir() and not src_link.is_symlink():
+            shutil.rmtree(src_link)
+    try:
+        src_link.symlink_to(source_cxxmg_dir.resolve(), target_is_directory=True)
+    except OSError:
+        # Windows without developer mode may not allow symlinks. Fall back to a
+        # lightweight copy of the test tree; CXXMG tests are small enough that
+        # this is acceptable and keeps the behavior portable.
+        shutil.copytree(source_cxxmg_dir, src_link, dirs_exist_ok=True)
+
+    env = env_with_preferred_tools(build_dir)
+    path_value = env.get("PATH", os.environ.get("PATH", ""))
+    clang = selected_clang_for_lit(build_dir)
+    tool_dirs = [str(directory) for directory in preferred_tool_bin_dirs(build_dir) if directory.is_dir()]
+    python_exe = sys.executable
+    test_exec_root = build_dir / "test" / "clang-mg-lit-exec"
+    test_exec_root.mkdir(parents=True, exist_ok=True)
+
+    cfg = f"""
+# Auto-generated by scripts/test-llvm.py.
+# This focused config is intentionally minimal: it avoids loading upstream
+# clang/test/lit.cfg.py so CXXMG-only runs do not execute global clang-repl
+# CUDA/JIT feature probes before the actual clang-mg tests run.
+import os
+import lit.formats
+import lit.llvm
+
+config.name = "ClangMG-CXXMG"
+config.test_format = lit.formats.ShTest(execute_external=False)
+config.suffixes = [".c", ".cpp", ".i", ".m", ".mm", ".cu", ".hlsl", ".ll", ".cl", ".s", ".S", ".test"]
+config.excludes = ["Inputs", "CMakeLists.txt", "README.txt", "LICENSE.txt"]
+config.test_source_root = os.path.dirname(__file__)
+config.test_exec_root = {escape_lit_string(str(test_exec_root))}
+config.llvm_tools_dir = {escape_lit_string(str(build_dir / "bin"))}
+config.clang_tools_dir = {escape_lit_string(str(build_dir / "bin"))}
+config.python_executable = {escape_lit_string(python_exe)}
+config.target_triple = {escape_lit_string(inferred_target_triple(build_dir) or "unknown-unknown-unknown")}
+config.host_triple = config.target_triple
+config.environment["PATH"] = {escape_lit_string(path_value)}
+config.environment["CLANG_NO_DEFAULT_CONFIG"] = "1"
+
+# Standalone synthetic lit configs are not loaded through LLVM's generated
+# lit.site.cfg.py, so lit.llvm.llvm_config is still None here until we
+# initialize it explicitly. This keeps the useful LLVM substitutions without
+# importing clang/test/lit.cfg.py and triggering global clang-repl probes.
+lit.llvm.initialize(lit_config, config)
+llvm_config = lit.llvm.llvm_config
+llvm_config.use_default_substitutions()
+config.substitutions.append(("%PATH%", config.environment["PATH"]))
+config.substitutions.append(("%target_triple", config.target_triple))
+
+_clang = {escape_lit_string(clang)}
+config.substitutions.append(("%clang", _clang))
+config.substitutions.append(("%clang_cc1", _clang + " -cc1"))
+config.substitutions.append(("%clangxx", _clang))
+config.substitutions.append(("%clang_cpp", _clang + " -E"))
+config.substitutions.append(("%clang_analyze_cc1", _clang + " -cc1 -analyze"))
+
+tool_dirs = {tool_dirs!r}
+llvm_config.add_tool_substitutions(["FileCheck", "not", "count", "split-file"], tool_dirs)
+"""
+    (suite_dir / "lit.cfg.py").write_text(textwrap.dedent(cfg).lstrip(), encoding="utf-8")
+    return suite_dir
+
+
+def map_to_minimal_clang_mg_suite(project_test_dir: Path, suite_dir: Path, test_paths: list[Path]) -> list[Path]:
+    cxxmg_root = (project_test_dir / "CXXMG").resolve()
+    mapped: list[Path] = []
+    for path in test_paths:
+        rel = path.resolve().relative_to(cxxmg_root)
+        mapped.append(suite_dir / "src" / rel)
+    return mapped
+
+
+def run_minimal_clang_mg_lit(build_dir: Path, jobs: str, project_test_dir: Path, test_paths: list[Path]) -> None:
+    lit_cmd = find_llvm_lit_command(build_dir)
+    suite_dir = create_minimal_clang_mg_lit_suite(build_dir, project_test_dir / "CXXMG")
+    mapped_tests = map_to_minimal_clang_mg_suite(project_test_dir, suite_dir, test_paths)
+    extra_args = shlex.split(os.environ.get("CLANG_MG_LIT_OPTS", ""))
+    args = [*lit_cmd, "-j", str(jobs), *extra_args, *[str(path) for path in mapped_tests]]
+    env = env_with_preferred_tools(build_dir)
+    print()
+    print("Running llvm-lit with minimal CXXMG config:")
+    print(f"  Config root: {suite_dir}")
+    if env.get("CLANG"):
+        print(f"  CLANG={env['CLANG']}")
+    print("  " + " ".join(args))
+    run(args, env=env)
+
 def run_lit(build_dir: Path, jobs: str, test_paths: list[Path]) -> None:
     lit_cmd = find_llvm_lit_command(build_dir)
     extra_args = shlex.split(os.environ.get("CLANG_MG_LIT_OPTS", ""))
     args = [*lit_cmd, "-j", str(jobs), *extra_args, *[str(path) for path in test_paths]]
+    env = env_with_preferred_tools(build_dir)
     print()
     print("Running llvm-lit:")
+    if env.get("CLANG"):
+        print(f"  CLANG={env['CLANG']}")
     print("  " + " ".join(args))
-    run(args, env=env_with_preferred_tools(build_dir))
+    run(args, env=env)
 
 
 def main(argv: list[str]) -> int:
@@ -404,6 +627,10 @@ def main(argv: list[str]) -> int:
     for directory in preferred_tool_bin_dirs(build_dir):
         print(f"  {directory}")
     print("  PATH")
+    lit_env = env_with_preferred_tools(build_dir)
+    if lit_env.get("CLANG"):
+        source = "user" if os.environ.get("CLANG", "").strip() else "auto"
+        print(f"Lit CLANG ({source}): {lit_env['CLANG']}")
     if requested_tests:
         print("Requested tests:")
         for test in requested_tests:
@@ -420,8 +647,13 @@ def main(argv: list[str]) -> int:
     for path in resolved_tests:
         print(f"  {path}")
 
-    build_required_subset_targets(build_dir, build_type, jobs, project)
-    run_lit(build_dir, jobs, resolved_tests)
+    if should_use_minimal_clang_mg_lit(project, project_test_dir, resolved_tests):
+        print("Lit config:    minimal CXXMG config (skips upstream clang-repl probes)")
+        build_minimal_clang_mg_test_targets(build_dir, build_type, jobs)
+        run_minimal_clang_mg_lit(build_dir, jobs, project_test_dir, resolved_tests)
+    else:
+        build_required_subset_targets(build_dir, build_type, jobs, project)
+        run_lit(build_dir, jobs, resolved_tests)
     return 0
 
 
