@@ -1,0 +1,70 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Mike <michaelgorney4@gmail.com>
+Date: Tue, 9 Jun 2026 23:56:09 -0400
+Subject: [PATCH] clang-mg: Update branding and reporting in multiple locations
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Updates several components with custom branding and bug report handling.
+
+The build now identifies itself as "clang-mg" instead of standard LLVM/Clan[9D[K
+LLVM/Clang. This includes setting the package name in llvm's CMakeLists and[3D[K
+and updating crash diagnostic messages (in Driver.cpp and PrettyStackTrace.[17D[K
+PrettyStackTrace.cpp).
+
+It also redirects the designated bug reporting URL to a project-specific lo[2D[K
+location.
+
+diff --git a/clang/lib/Driver/Driver.cpp b/clang/lib/Driver/Driver.cpp
+index 816eb5274d6e..4d8ef57fd026 100644
+--- a/clang/lib/Driver/Driver.cpp
++++ b/clang/lib/Driver/Driver.cpp
+@@ -1966,7 +1966,11 @@ bool Driver::getCrashDiagnosticFile(StringRef ReproCrashFilename,
+ 
+ static const char BugReportMsg[] =
+     "\n********************\n\n"
+-    "PLEASE ATTACH THE FOLLOWING CRASH REPRODUCER FILES TO THE BUG REPORT:";
++    "This is clang-mg, a patched, unofficial Clang/LLVM build.\n"
++    "Do NOT report this crash to the LLVM project unless it also reproduces "
++    "with an official upstream LLVM/Clang build.\n"
++    "Please report clang-mg crashes to " BUG_REPORT_URL
++    " and attach the following crash reproducer files:";
+ 
+ // When clang crashes, produce diagnostic information including the fully
+ // preprocessed source file(s).  Request that the developer attach the
+diff --git a/llvm/CMakeLists.txt b/llvm/CMakeLists.txt
+index 4509fbaba1d2..231350a7069b 100644
+--- a/llvm/CMakeLists.txt
++++ b/llvm/CMakeLists.txt
+@@ -461,9 +461,9 @@ set(LLVM_FORCE_VC_REPOSITORY
+ 
+ option(LLVM_TOOL_LLVM_DRIVER_BUILD "Enables building the llvm multicall tool" OFF)
+ 
+-set(PACKAGE_NAME LLVM)
++set(PACKAGE_NAME "clang-mg")
+ set(PACKAGE_STRING "${PACKAGE_NAME} ${PACKAGE_VERSION}")
+-set(PACKAGE_BUGREPORT "https://github.com/llvm/llvm-project/issues/")
++set(PACKAGE_BUGREPORT "https://github.com/mgorn/mg-cxx/issues/")
+ 
+ set(BUG_REPORT_URL "${PACKAGE_BUGREPORT}" CACHE STRING
+   "Default URL where bug reports are to be submitted.")
+diff --git a/llvm/lib/Support/PrettyStackTrace.cpp b/llvm/lib/Support/PrettyStackTrace.cpp
+index eff99473b205..462ef94fffd0 100644
+--- a/llvm/lib/Support/PrettyStackTrace.cpp
++++ b/llvm/lib/Support/PrettyStackTrace.cpp
+@@ -38,7 +38,10 @@
+ using namespace llvm;
+ 
+ static const char *BugReportMsg =
+-    "PLEASE submit a bug report to " BUG_REPORT_URL
++    "This is clang-mg, a patched, unofficial Clang/LLVM build.\n"
++    "Do NOT report this crash to the LLVM project unless it also reproduces "
++    "with an official upstream LLVM/Clang build.\n"
++    "Please report clang-mg crashes to " BUG_REPORT_URL
+     " and include the crash backtrace and instructions to reproduce the bug.\n";
+ 
+ // If backtrace support is not enabled, compile out support for pretty stack
+-- 
+2.54.0
+
