@@ -1,0 +1,1307 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Mike <michaelgorney4@gmail.com>
+Date: Tue, 9 Jun 2026 23:02:46 -0400
+Subject: [PATCH] Add/move missing tests
+
+This adds (or moves) the missing conditional-member and urlinclude tests, and changes what's required to make them pass.
+
+diff --git a/clang/include/clang/AST/DeclCXXMG.h b/clang/include/clang/AST/DeclCXXMG.h
+index 3092e259deaa..1bd6a5538a0f 100644
+--- a/clang/include/clang/AST/DeclCXXMG.h
++++ b/clang/include/clang/AST/DeclCXXMG.h
+@@ -122,6 +122,12 @@ public:
+          SourceLocation IfLoc,
+          llvm::ArrayRef<CXXMGConditionalMemberArm> ParsedArms);
+ 
++  static CXXMGConditionalMemberDecl *
++  CreateDeserialized(ASTContext &Ctx, GlobalDeclID ID);
++
++  void addDeserializedArm(ASTContext &Ctx,
++                          const CXXMGConditionalMemberArm &Arm);
++
+   llvm::ArrayRef<CXXMGConditionalMemberArm> arms() const {
+     return Arms;
+   }
+@@ -152,4 +158,4 @@ public:
+ 
+ } // namespace clang
+ 
+-#endif // LLVM_CLANG_AST_DECLCXXMG_H
+\ No newline at end of file
++#endif // LLVM_CLANG_AST_DECLCXXMG_H
+diff --git a/clang/include/clang/Serialization/ASTBitCodes.h b/clang/include/clang/Serialization/ASTBitCodes.h
+index 354f5843e1af..84e057bd685d 100644
+--- a/clang/include/clang/Serialization/ASTBitCodes.h
++++ b/clang/include/clang/Serialization/ASTBitCodes.h
+@@ -1549,7 +1549,10 @@ enum DeclCode {
+   /// A TraitRequirementDecl record.
+   DECL_TRAIT_REQUIREMENT,
+ 
+-  DECL_LAST = DECL_TRAIT_REQUIREMENT
++  /// A CXXMGConditionalMemberDecl record.
++  DECL_CXXMG_CONDITIONAL_MEMBER,
++
++  DECL_LAST = DECL_CXXMG_CONDITIONAL_MEMBER
+ };
+ 
+ /// Record codes for each kind of statement or expression.
+diff --git a/clang/lib/AST/DeclCXXMG.cpp b/clang/lib/AST/DeclCXXMG.cpp
+index 7b4450f48b5e..a097e4dfe7e5 100644
+--- a/clang/lib/AST/DeclCXXMG.cpp
++++ b/clang/lib/AST/DeclCXXMG.cpp
+@@ -45,4 +45,23 @@ CXXMGConditionalMemberDecl::Create(
+   }
+ 
+   return D;
+-}
+\ No newline at end of file
++}
++
++CXXMGConditionalMemberDecl *
++CXXMGConditionalMemberDecl::CreateDeserialized(ASTContext &Ctx,
++                                               GlobalDeclID ID) {
++  return new (Ctx, ID) CXXMGConditionalMemberDecl(nullptr, SourceLocation());
++}
++
++void CXXMGConditionalMemberDecl::addDeserializedArm(
++    ASTContext &Ctx, const CXXMGConditionalMemberArm &Arm) {
++  unsigned FirstDecl = OwnedDecls.size();
++  OwnedDecls.append(Ctx, Arm.Decls.begin(), Arm.Decls.end());
++
++  llvm::ArrayRef<Decl *> StableDecls(OwnedDecls.begin() + FirstDecl,
++                                     Arm.Decls.size());
++  Arms.push_back(CXXMGConditionalMemberArm{Arm.Condition, StableDecls,
++                                           Arm.StartAS, Arm.Range,
++                                           Arm.IsElseArm},
++                 Ctx);
++}
+diff --git a/clang/lib/Sema/SemaDeclCXX.cpp b/clang/lib/Sema/SemaDeclCXX.cpp
+index 0be654f0965f..fc44c2c74f07 100644
+--- a/clang/lib/Sema/SemaDeclCXX.cpp
++++ b/clang/lib/Sema/SemaDeclCXX.cpp
+@@ -3508,6 +3508,10 @@ Decl *Sema::ActOnCXXMGConditionalMember(
+     return nullptr;
+ 
+   auto *D = CXXMGConditionalMemberDecl::Create(Context, Record, IfLoc, Arms);
++  AccessSpecifier AS = Arms.empty() ? AS_none : Arms.front().StartAS;
++  if (AS == AS_none)
++    AS = Record->isClass() ? AS_private : AS_public;
++  D->setAccess(AS);
+   Record->addDecl(D);
+ 
+   for (const CXXMGConditionalMemberArm &Arm : D->arms()) {
+diff --git a/clang/lib/Serialization/ASTReaderDecl.cpp b/clang/lib/Serialization/ASTReaderDecl.cpp
+index c2f26795e5bf..76acced1da16 100644
+--- a/clang/lib/Serialization/ASTReaderDecl.cpp
++++ b/clang/lib/Serialization/ASTReaderDecl.cpp
+@@ -21,6 +21,7 @@
+ #include "clang/AST/Decl.h"
+ #include "clang/AST/DeclBase.h"
+ #include "clang/AST/DeclCXX.h"
++#include "clang/AST/DeclCXXMG.h"
+ #include "clang/AST/DeclFriend.h"
+ #include "clang/AST/DeclObjC.h"
+ #include "clang/AST/DeclOpenMP.h"
+@@ -385,6 +386,7 @@ public:
+   VisitImplicitConceptSpecializationDecl(ImplicitConceptSpecializationDecl *D);
+   void VisitRequiresExprBodyDecl(RequiresExprBodyDecl *D);
+   void VisitTraitRequirementDecl(TraitRequirementDecl *D);
++  void VisitCXXMGConditionalMemberDecl(CXXMGConditionalMemberDecl *D);
+   RedeclarableResult VisitRedeclarableTemplateDecl(RedeclarableTemplateDecl *D);
+   void VisitClassTemplateDecl(ClassTemplateDecl *D);
+   void VisitBuiltinTemplateDecl(BuiltinTemplateDecl *D);
+@@ -2463,6 +2465,26 @@ void ASTDeclReader::VisitTraitRequirementDecl(TraitRequirementDecl *D) {
+   D->FunctionTypeInfo = Record.readTypeSourceInfo();
+ }
+ 
++void ASTDeclReader::VisitCXXMGConditionalMemberDecl(
++    CXXMGConditionalMemberDecl *D) {
++  VisitDecl(D);
++  unsigned NumArms = Record.readInt();
++  for (unsigned I = 0; I != NumArms; ++I) {
++    Expr *Condition = Record.readExpr();
++    SourceRange Range = Record.readSourceRange();
++    auto StartAS = static_cast<AccessSpecifier>(Record.readInt());
++    bool IsElseArm = Record.readInt();
++    unsigned NumDecls = Record.readInt();
++    SmallVector<Decl *, 8> PatternDecls;
++    for (unsigned J = 0; J != NumDecls; ++J)
++      PatternDecls.push_back(Record.readDecl());
++    D->addDeserializedArm(
++        Reader.getContext(),
++        CXXMGConditionalMemberArm(Condition, PatternDecls, StartAS, Range,
++                                  IsElseArm));
++  }
++}
++
+ void ASTDeclReader::ReadSpecializations(ModuleFile &M, Decl *D,
+                                         llvm::BitstreamCursor &DeclsCursor,
+                                         bool IsPartial) {
+@@ -4148,6 +4170,9 @@ Decl *ASTReader::ReadDeclRecord(GlobalDeclID ID) {
+   case DECL_TRAIT_REQUIREMENT:
+     D = TraitRequirementDecl::CreateDeserialized(Context, ID);
+     break;
++  case DECL_CXXMG_CONDITIONAL_MEMBER:
++    D = CXXMGConditionalMemberDecl::CreateDeserialized(Context, ID);
++    break;
+   case DECL_STATIC_ASSERT:
+     D = StaticAssertDecl::CreateDeserialized(Context, ID);
+     break;
+diff --git a/clang/lib/Serialization/ASTWriterDecl.cpp b/clang/lib/Serialization/ASTWriterDecl.cpp
+index a7dfff31f5ad..933a6e4905b3 100644
+--- a/clang/lib/Serialization/ASTWriterDecl.cpp
++++ b/clang/lib/Serialization/ASTWriterDecl.cpp
+@@ -13,6 +13,7 @@
+ #include "ASTCommon.h"
+ #include "clang/AST/Attr.h"
+ #include "clang/AST/DeclCXX.h"
++#include "clang/AST/DeclCXXMG.h"
+ #include "clang/AST/DeclTemplate.h"
+ #include "clang/AST/DeclVisitor.h"
+ #include "clang/AST/Expr.h"
+@@ -125,6 +126,7 @@ namespace clang {
+         ImplicitConceptSpecializationDecl *D);
+     void VisitRequiresExprBodyDecl(RequiresExprBodyDecl *D);
+     void VisitTraitRequirementDecl(TraitRequirementDecl *D);
++    void VisitCXXMGConditionalMemberDecl(CXXMGConditionalMemberDecl *D);
+     void VisitRedeclarableTemplateDecl(RedeclarableTemplateDecl *D);
+     void VisitClassTemplateDecl(ClassTemplateDecl *D);
+     void VisitVarTemplateDecl(VarTemplateDecl *D);
+@@ -1900,6 +1902,22 @@ void ASTDeclWriter::VisitTraitRequirementDecl(TraitRequirementDecl *D) {
+   Code = serialization::DECL_TRAIT_REQUIREMENT;
+ }
+ 
++void ASTDeclWriter::VisitCXXMGConditionalMemberDecl(
++    CXXMGConditionalMemberDecl *D) {
++  VisitDecl(D);
++  Record.push_back(D->getNumArms());
++  for (const CXXMGConditionalMemberArm &Arm : D->arms()) {
++    Record.AddStmt(Arm.Condition);
++    Record.AddSourceRange(Arm.Range);
++    Record.push_back(Arm.StartAS);
++    Record.push_back(Arm.IsElseArm);
++    Record.push_back(Arm.Decls.size());
++    for (Decl *PatternDecl : Arm.Decls)
++      Record.AddDeclRef(PatternDecl);
++  }
++  Code = serialization::DECL_CXXMG_CONDITIONAL_MEMBER;
++}
++
+ void ASTDeclWriter::VisitRedeclarableTemplateDecl(RedeclarableTemplateDecl *D) {
+   VisitRedeclarable(D);
+ 
+diff --git a/clang/test/CXXMG/conditional-members/conditional-member-access.cpp b/clang/test/CXXMG/conditional-members/conditional-member-access.cpp
+new file mode 100644
+index 000000000000..e192474ae79e
+--- /dev/null
++++ b/clang/test/CXXMG/conditional-members/conditional-member-access.cpp
+@@ -0,0 +1,36 @@
++// RUN: %clang_cc1 -std=c++20 -fcxxmg -fsyntax-only -verify %s
++
++class Access {
++public:
++  if constexpr (true) { int pub; }
++private:
++  if constexpr (true) { int priv; } // expected-note {{declared private here}}
++protected:
++  if constexpr (true) { int prot; } // expected-note {{declared protected here}}
++public:
++  int after;
++};
++
++struct Derived : Access {
++  void f() { prot = 1; }
++};
++
++void test(Access &a) {
++  a.pub = 1;
++  a.after = 2;
++  a.priv = 3; // expected-error {{'priv' is a private member}}
++  a.prot = 4; // expected-error {{'prot' is a protected member}}
++}
++
++struct StructDefaultAccess {
++  if constexpr (true) { int value; }
++};
++
++class ClassDefaultAccess {
++  if constexpr (true) { int value; } // expected-note {{implicitly declared private here}}
++};
++
++void defaults(StructDefaultAccess &s, ClassDefaultAccess &c) {
++  s.value = 1;
++  c.value = 2; // expected-error {{'value' is a private member}}
++}
+diff --git a/clang/test/CXXMG/conditional-members/conditional-member-ast-dump.cpp b/clang/test/CXXMG/conditional-members/conditional-member-ast-dump.cpp
+new file mode 100644
+index 000000000000..7c8b276b3dad
+--- /dev/null
++++ b/clang/test/CXXMG/conditional-members/conditional-member-ast-dump.cpp
+@@ -0,0 +1,18 @@
++// RUN: %clang_cc1 -std=c++20 -fcxxmg -ast-dump %s | FileCheck %s
++
++template <bool B>
++struct DumpMe {
++  if constexpr (B) {
++    int yes;
++  } else {
++    long no;
++  }
++};
++
++DumpMe<true> use_true;
++DumpMe<false> use_false;
++
++// CHECK: CXXRecordDecl {{.*}} DumpMe definition
++// CHECK: CXXMGConditionalMemberDecl
++// CHECK: FieldDecl {{.*}} yes 'int'
++// CHECK: FieldDecl {{.*}} no 'long'
+diff --git a/clang/test/CXXMG/conditional-members/conditional-member-conflicts.cpp b/clang/test/CXXMG/conditional-members/conditional-member-conflicts.cpp
+new file mode 100644
+index 000000000000..125c7d781a4e
+--- /dev/null
++++ b/clang/test/CXXMG/conditional-members/conditional-member-conflicts.cpp
+@@ -0,0 +1,36 @@
++// RUN: %clang_cc1 -std=c++20 -fcxxmg -fsyntax-only -verify %s
++
++template <bool B>
++struct SameNameExclusive {
++  if constexpr (B) { int value; }
++  else { char value; }
++};
++
++static_assert(__is_same(decltype(SameNameExclusive<true>::value), int));
++static_assert(__is_same(decltype(SameNameExclusive<false>::value), char));
++
++struct InactiveDoesNotConflict {
++  if constexpr (false) { int value; }
++  int value;
++};
++
++struct ActiveConflict {
++  int value; // expected-note {{previous}}
++  if constexpr (true) {
++    int value; // expected-error {{duplicate member 'value'}}
++  }
++};
++
++struct IndependentActiveConflict {
++  if constexpr (true) { int value; } // expected-note {{previous}}
++  if constexpr (true) { int value; } // expected-error {{duplicate member 'value'}}
++};
++
++template <bool B>
++struct AliasExclusive {
++  if constexpr (B) { using type = int; }
++  else { using type = char; }
++};
++
++static_assert(__is_same(typename AliasExclusive<true>::type, int));
++static_assert(__is_same(typename AliasExclusive<false>::type, char));
+diff --git a/clang/test/CXXMG/conditional-members/conditional-member-dependent-lookup.cpp b/clang/test/CXXMG/conditional-members/conditional-member-dependent-lookup.cpp
+new file mode 100644
+index 000000000000..8de0f09ac6f3
+--- /dev/null
++++ b/clang/test/CXXMG/conditional-members/conditional-member-dependent-lookup.cpp
+@@ -0,0 +1,64 @@
++// RUN: %clang_cc1 -std=c++20 -fcxxmg -fsyntax-only -verify %s
++
++template <bool Enabled>
++struct DepLookup {
++  if constexpr (Enabled) {
++    int value;
++    using type = int;
++  } else {
++    int fallback;
++  }
++
++  int implicit_this() {
++    if constexpr (Enabled)
++      return value;
++    else
++      return fallback;
++  }
++
++  int explicit_this() {
++    if constexpr (Enabled)
++      return this->value; // expected-error {{no member named 'value'}}
++    else
++      return this->fallback; // expected-error {{no member named 'fallback'}}
++  }
++
++  int const_member() const {
++    if constexpr (Enabled)
++      return value;
++    else
++      return fallback;
++  }
++
++  template <class T>
++  int member_template() {
++    if constexpr (Enabled)
++      return value;
++    else
++      return fallback;
++  }
++
++  int typo() {
++    return valu; // expected-error {{use of undeclared identifier 'valu'}}
++  }
++
++  void value_as_type() {
++    typename DepLookup::value *p; // expected-error {{no type named 'value'}}
++  }
++};
++
++template struct DepLookup<true>;
++template struct DepLookup<false>;
++
++template <class T>
++struct KnownFalseArmStillHidden {
++  if constexpr (false) {
++    int never;
++  }
++
++  void f() {
++    never = 1; // expected-error {{use of undeclared identifier 'never'}}
++  }
++};
++
++template struct KnownFalseArmStillHidden<int>;
+diff --git a/clang/test/Preprocessor/cxxmg-if-constexpr-members-feature-test.cpp b/clang/test/CXXMG/conditional-members/conditional-member-feature-test.cpp
+similarity index 60%
+rename from clang/test/Preprocessor/cxxmg-if-constexpr-members-feature-test.cpp
+rename to clang/test/CXXMG/conditional-members/conditional-member-feature-test.cpp
+index d24454db9942..4c862b8c23f7 100644
+--- a/clang/test/Preprocessor/cxxmg-if-constexpr-members-feature-test.cpp
++++ b/clang/test/CXXMG/conditional-members/conditional-member-feature-test.cpp
+@@ -1,15 +1,14 @@
+-// RUN: %clang_cc1 -x c++ -std=c++17 -fsyntax-only %s
+-// RUN: %clang_cc1 -x c++ -std=c++11 -fsyntax-only %s
+-// RUN: %clang_cc1 -x c++ -std=c++98 -fsyntax-only %s
+-// RUN: %clang_cc1 -x c++ -std=c++mg -fsyntax-only %s
+-// RUN: %clang_cc1 -x c -std=c23 -fsyntax-only %s
++// RUN: %clang_cc1 -x c++ -std=c++20 -fcxxmg -DEXPECT_CXXMG=1 -fsyntax-only %s
++// RUN: %clang_cc1 -x c++ -std=c++20 -fno-cxxmg -DEXPECT_NO_CXXMG=1 -fsyntax-only %s
++// RUN: %clang_cc1 -x c++ -std=c++17 -fno-cxxmg -DEXPECT_NO_CXXMG=1 -fsyntax-only %s
++// RUN: %clang_cc1 -x c++ -std=c++98 -fno-cxxmg -DEXPECT_NO_CXXMG=1 -fsyntax-only %s
++// RUN: %clang_cc1 -x c -std=c23 -fno-cxxmg -DEXPECT_NO_CXXMG=1 -fsyntax-only %s
+ 
+ #ifndef __has_feature
+ #error "__has_feature should be available"
+ #endif
+ 
+-#if defined(__cplusplus) && __cplusplus >= 201103L
+-
++#ifdef EXPECT_CXXMG
+ #ifndef __cxxmg_if_constexpr_member
+ #error "__cxxmg_if_constexpr_member should be defined in C++MG mode"
+ #endif
+@@ -39,32 +38,18 @@ struct UsesCXXMGFeatureTest {
+ 
+ static_assert(sizeof(UsesCXXMGFeatureTest<true>) == sizeof(int), "");
+ 
+-#elif defined(__cplusplus)
+-
+-#ifdef __cxxmg_if_constexpr_member
+-#error "__cxxmg_if_constexpr_member should not be defined before C++11"
+-#endif
+-
+-#if __has_feature(cxxmg_if_constexpr_members)
+-#error "cxxmg_if_constexpr_members should not be available before C++11"
+ #endif
+ 
+-#if __has_extension(cxxmg_if_constexpr_members)
+-#error "cxxmg_if_constexpr_members should not be an extension before C++11"
+-#endif
+-
+-#else
+-
++#ifdef EXPECT_NO_CXXMG
+ #ifdef __cxxmg_if_constexpr_member
+-#error "__cxxmg_if_constexpr_member should not be defined outside C++"
++#error "__cxxmg_if_constexpr_member should not be defined outside C++MG"
+ #endif
+ 
+ #if __has_feature(cxxmg_if_constexpr_members)
+-#error "cxxmg_if_constexpr_members should not be available outside C++"
++#error "cxxmg_if_constexpr_members should not be available outside C++MG"
+ #endif
+ 
+ #if __has_extension(cxxmg_if_constexpr_members)
+-#error "cxxmg_if_constexpr_members should not be an extension outside C++"
++#error "cxxmg_if_constexpr_members should not be an extension outside C++MG"
+ #endif
+-
+ #endif
+diff --git a/clang/test/CXXMG/conditional-members/conditional-member-interactions.cpp b/clang/test/CXXMG/conditional-members/conditional-member-interactions.cpp
+new file mode 100644
+index 000000000000..3a384abc00a6
+--- /dev/null
++++ b/clang/test/CXXMG/conditional-members/conditional-member-interactions.cpp
+@@ -0,0 +1,14 @@
++// RUN: clang-mg++ -std=c++20 -fsyntax-only -Xclang -verify %s
++// expected-no-diagnostics
++
++trait HasValue {
++  int value;
++};
++
++template <bool B>
++struct MaybeValue {
++  if constexpr (B) { int value; }
++};
++
++static_assert(MaybeValue<true> implements HasValue);
++static_assert((MaybeValue<false> implements HasValue) == false);
+diff --git a/clang/test/CXXMG/conditional-members/conditional-member-member-kinds.cpp b/clang/test/CXXMG/conditional-members/conditional-member-member-kinds.cpp
+new file mode 100644
+index 000000000000..29fa959b8f38
+--- /dev/null
++++ b/clang/test/CXXMG/conditional-members/conditional-member-member-kinds.cpp
+@@ -0,0 +1,43 @@
++// RUN: %clang_cc1 -std=c++20 -fcxxmg -fsyntax-only -verify %s
++
++struct Base {
++  int inherited;
++};
++
++template <bool Enabled>
++struct Kinds : Base {
++  if constexpr (Enabled) {
++    int field;
++    static int static_data;
++    void method() {}
++    static constexpr int static_method() { return 1; }
++    using type = int;
++    struct Nested { int x; };
++    enum E { enumerator = 7 };
++    using Base::inherited;
++    template <class T> using AliasTemplate = T;
++  } else {
++    char fallback;
++  }
++};
++
++static_assert(__is_same(typename Kinds<true>::type, int));
++static_assert(Kinds<true>::static_method() == 1);
++static_assert(Kinds<true>::enumerator == 7);
++static_assert(__is_same(typename Kinds<true>::template AliasTemplate<long>, long));
++
++void enabled(Kinds<true> &k) {
++  k.field = 1;
++  k.method();
++  k.inherited = 2;
++  Kinds<true>::Nested n = {3};
++  (void)n;
++}
++
++void disabled(Kinds<false> &k) {
++  k.fallback = 1;
++  (void)k.field; // expected-error {{no member named 'field'}}
++  k.method(); // expected-error {{no member named 'method'}}
++}
++
++using DisabledType = typename Kinds<false>::type; // expected-error {{no type named 'type'}}
+diff --git a/clang/test/CXXMG/conditional-members/conditional-member-nontemplate.cpp b/clang/test/CXXMG/conditional-members/conditional-member-nontemplate.cpp
+new file mode 100644
+index 000000000000..b3709e860596
+--- /dev/null
++++ b/clang/test/CXXMG/conditional-members/conditional-member-nontemplate.cpp
+@@ -0,0 +1,29 @@
++// RUN: %clang_cc1 -std=c++20 -fcxxmg -fsyntax-only -verify %s
++
++struct NonTemplateKnownTrue {
++  if constexpr (true) { int visible; }
++  int f() { return visible; }
++};
++
++struct NonTemplateKnownFalse {
++  static constexpr bool enabled = false;
++  if constexpr (enabled) { int hidden; }
++  int visible;
++  void f() {
++    visible = 1;
++    hidden = 2; // expected-error {{use of undeclared identifier 'hidden'}}
++  }
++};
++
++consteval bool yes() { return true; }
++
++struct NonTemplateConstevalCondition {
++  if constexpr (yes()) { int value; }
++};
++
++struct InvalidInactiveDeclarationStillChecked {
++  if constexpr (false) {
++    int ; // expected-warning {{declaration does not declare anything}}
++  }
++  int recovered;
++};
+diff --git a/clang/test/CXXMG/conditional-members/conditional-member-parser-invalid.cpp b/clang/test/CXXMG/conditional-members/conditional-member-parser-invalid.cpp
+new file mode 100644
+index 000000000000..fd0efb1ca871
+--- /dev/null
++++ b/clang/test/CXXMG/conditional-members/conditional-member-parser-invalid.cpp
+@@ -0,0 +1,51 @@
++// RUN: %clang_cc1 -std=c++20 -fcxxmg -fsyntax-only -verify %s
++
++struct MissingConstexpr {
++  if (true) { int value; } // expected-error {{expected constexpr}}
++  int recovered;
++};
++
++struct MissingParen {
++  if constexpr true) { int value; } // expected-error {{expected '('}}
++  int recovered;
++};
++
++struct MissingCloseParen {
++  if constexpr (true { int value; } // expected-error {{expected ')'}} expected-note {{to match this '('}}
++  int recovered;
++};
++
++struct MissingBrace {
++  if constexpr (true)
++    int value; // expected-error {{expected '{'}}
++  int recovered;
++};
++
++struct BadElseIf {
++  if constexpr (false) { int a; }
++  else if (true) { int b; } // expected-error {{expected constexpr}}
++  int recovered;
++};
++
++struct BadElseBody {
++  if constexpr (false) { int a; }
++  else int b; // expected-error {{expected '{'}}
++  int recovered;
++};
++
++struct StrayElse {
++  else { int value; } // expected-error {{expected member name or ';'}}
++  int recovered;
++};
++
++struct AccessLabelInArm {
++  if constexpr (true) {
++  public: // expected-error {{expected identifier}}
++    int value;
++  }
++};
++
++void statement_if_constexpr() {
++  if constexpr (true) {
++  }
++}
+diff --git a/clang/test/CXXMG/conditional-members/conditional-member-parser.cpp b/clang/test/CXXMG/conditional-members/conditional-member-parser.cpp
+new file mode 100644
+index 000000000000..863f219ef65a
+--- /dev/null
++++ b/clang/test/CXXMG/conditional-members/conditional-member-parser.cpp
+@@ -0,0 +1,99 @@
++// RUN: %clang_cc1 -std=c++20 -fcxxmg -fsyntax-only -verify %s
++// expected-no-diagnostics
++
++struct SingleArm {
++  if constexpr (true) {
++    int value;
++  }
++};
++
++struct WithElse {
++  if constexpr (false) {
++    int first;
++  } else {
++    int second;
++  }
++};
++
++struct ElseIfChain {
++  if constexpr (false) {
++    int first;
++  } else if constexpr (true) {
++    int second;
++  } else {
++    int third;
++  }
++};
++
++template <bool Enabled>
++struct DependentCondition {
++  if constexpr (Enabled) {
++    int enabled;
++  } else {
++    int disabled;
++  }
++};
++
++struct EmptyArms {
++  int before;
++  if constexpr (true) {
++  } else {
++  }
++  int after;
++};
++
++template <bool A, bool B>
++struct MultipleChains {
++  if constexpr (A) {
++    int a;
++  }
++  int middle;
++  if constexpr (B) {
++    int b;
++  } else {
++    int c;
++  }
++};
++
++struct MixedFieldsAndFunctions {
++  int before;
++  void first();
++  if constexpr (true) {
++    int selected;
++    void method();
++  } else {
++    int rejected;
++  }
++  void last();
++  int after;
++};
++
++class InClass {
++  if constexpr (true) {
++    int value;
++  }
++};
++
++union InUnion {
++  if constexpr (true) {
++    int value;
++  } else {
++    float fallback;
++  }
++};
++
++struct Nested {
++  struct Inner {
++    if constexpr (true) {
++      int value;
++    }
++  };
++};
++
++void local_class_test() {
++  struct Local {
++    if constexpr (true) {
++      int value;
++    }
++  };
++}
+diff --git a/clang/test/CXXMG/conditional-members/conditional-member-pch.cpp b/clang/test/CXXMG/conditional-members/conditional-member-pch.cpp
+new file mode 100644
+index 000000000000..1983b3daa2ee
+--- /dev/null
++++ b/clang/test/CXXMG/conditional-members/conditional-member-pch.cpp
+@@ -0,0 +1,29 @@
++// RUN: %clang_cc1 -std=c++20 -fcxxmg -emit-pch -o %t.pch %s
++// RUN: %clang_cc1 -std=c++20 -fcxxmg -include-pch %t.pch -DUSING_PCH -fsyntax-only -verify %s
++
++#ifndef USING_PCH
++
++template <bool B>
++struct PchConditional {
++public:
++  if constexpr (B) {
++    int value;
++    using type = int;
++  } else {
++    char fallback;
++    using type = char;
++  }
++};
++
++#else
++
++// expected-no-diagnostics
++static_assert(__is_same(typename PchConditional<true>::type, int));
++static_assert(__is_same(typename PchConditional<false>::type, char));
++
++void use(PchConditional<true> &t, PchConditional<false> &f) {
++  t.value = 1;
++  f.fallback = 2;
++}
++
++#endif
+diff --git a/clang/test/CXXMG/conditional-members/conditional-member-recovery.cpp b/clang/test/CXXMG/conditional-members/conditional-member-recovery.cpp
+new file mode 100644
+index 000000000000..04a9216d5cba
+--- /dev/null
++++ b/clang/test/CXXMG/conditional-members/conditional-member-recovery.cpp
+@@ -0,0 +1,33 @@
++// RUN: %clang_cc1 -std=c++20 -fcxxmg -fsyntax-only -verify %s
++
++struct InvalidCondition {
++  int runtime;
++  if constexpr (runtime) { // expected-error {{invalid use of non-static data member 'runtime'}} expected-error {{expected member name or ';' after declaration specifiers}}
++    int value;
++  }
++  int recovered;
++};
++
++struct AfterErrorStillParsed {
++  if constexpr (true) {
++    int ; // expected-warning {{declaration does not declare anything}}
++  }
++  int recovered;
++};
++
++struct BadElseIfStillParsed {
++  if constexpr (false) {
++    int first;
++  } else if (true) { // expected-error {{expected constexpr}}
++    int second;
++  }
++  int recovered;
++};
++
++struct NonConstantCondition {
++  static bool enabled;
++  if constexpr (enabled) {
++    int value;
++  }
++  int recovered;
++};
+diff --git a/clang/test/SemaCXX/cxxmg-if-constexpr-members.cpp b/clang/test/CXXMG/conditional-members/conditional-member-selection.cpp
+similarity index 72%
+rename from clang/test/SemaCXX/cxxmg-if-constexpr-members.cpp
+rename to clang/test/CXXMG/conditional-members/conditional-member-selection.cpp
+index d30fa7112a00..dd86813cd7c4 100644
+--- a/clang/test/SemaCXX/cxxmg-if-constexpr-members.cpp
++++ b/clang/test/CXXMG/conditional-members/conditional-member-selection.cpp
+@@ -1,4 +1,4 @@
+-// RUN: %clang_cc1 -std=c++mg -fsyntax-only -verify %s
++// RUN: %clang_cc1 -std=c++20 -fcxxmg -fsyntax-only -verify %s
+ 
+ struct PickTrue {
+   if constexpr (true) {
+@@ -48,6 +48,28 @@ void checkPickElseIf(PickElseIf &value) {
+   (void)value.third; // expected-error {{no member named 'third'}}
+ }
+ 
++struct PickFinalElse {
++  if constexpr (false) {
++    int first;
++  } else if constexpr (false) {
++    long second;
++  } else {
++    char third;
++  }
++};
++
++static_assert(__is_same(decltype(PickFinalElse::third), char));
++
++struct PickNothing {
++  if constexpr (false) {
++    int rejected;
++  }
++};
++
++void checkPickNothing(PickNothing &value) {
++  (void)value.rejected; // expected-error {{no member named 'rejected'}}
++}
++
+ template <bool Enabled>
+ struct DependentPick {
+   if constexpr (Enabled) {
+@@ -70,6 +92,33 @@ void checkDependentFalse(DependentPick<false> &value) {
+   (void)value.enabled; // expected-error {{no member named 'enabled'}}
+ }
+ 
++template <bool Enabled>
++struct OptionalMember {
++  if constexpr (Enabled) {
++    int value;
++    static int static_value; // expected-note {{'OptionalMember<true>::static_value' declared here}}
++    using type = int;
++    void method() {}
++  }
++};
++
++static_assert(sizeof(OptionalMember<false>) >= 1);
++static_assert(__is_same(decltype(OptionalMember<true>::static_value), int));
++static_assert(__is_same(typename OptionalMember<true>::type, int));
++
++void optional_true(OptionalMember<true> &x) {
++  x.value = sizeof(x.value);
++  x.method();
++}
++
++void optional_false(OptionalMember<false> &x) {
++  (void)x.value; // expected-error {{no member named 'value'}}
++  (void)OptionalMember<false>::static_value; // expected-error {{no member named 'static_value'}}
++  x.method(); // expected-error {{no member named 'method'}}
++}
++
++using OptionalFalseType = typename OptionalMember<false>::type; // expected-error {{no type named 'type'}}
++
+ struct CXXMGFakeMutex {};
+ 
+ template <class T>
+diff --git a/clang/test/CXXMG/conditional-members/conditional-member-special-members.cpp b/clang/test/CXXMG/conditional-members/conditional-member-special-members.cpp
+new file mode 100644
+index 000000000000..44b65506a7fe
+--- /dev/null
++++ b/clang/test/CXXMG/conditional-members/conditional-member-special-members.cpp
+@@ -0,0 +1,57 @@
++// RUN: %clang_cc1 -std=c++20 -fcxxmg -fsyntax-only -verify %s
++
++struct NonTrivial { NonTrivial(); };
++
++template <bool Enabled>
++struct MaybeNonTrivial {
++  if constexpr (Enabled) { NonTrivial nt; }
++};
++
++static_assert(!__is_trivially_constructible(MaybeNonTrivial<true>));
++static_assert(__is_trivially_constructible(MaybeNonTrivial<false>));
++
++template <bool Enabled>
++struct MaybeDeletedCopy {
++  if constexpr (Enabled) {
++    MaybeDeletedCopy() = default;
++    MaybeDeletedCopy(const MaybeDeletedCopy &) = delete; // expected-note {{'MaybeDeletedCopy' has been explicitly marked deleted here}}
++  }
++};
++
++void copy_false(MaybeDeletedCopy<false> a) {
++  MaybeDeletedCopy<false> b = a;
++  (void)b;
++}
++
++void copy_true(MaybeDeletedCopy<true> a) {
++  MaybeDeletedCopy<true> b = a; // expected-error {{call to deleted constructor}}
++  (void)b;
++}
++
++template <bool Enabled>
++struct MaybeReference {
++  if constexpr (Enabled) { int &ref; } // expected-note {{default constructor of 'MaybeReference<true>' is implicitly deleted because field 'ref' of reference type 'int &' would not be initialized}}
++};
++
++void default_reference_false() {
++  MaybeReference<false> value;
++  (void)value;
++}
++
++void default_reference_true() {
++  MaybeReference<true> value; // expected-error {{call to implicitly-deleted default constructor}}
++  (void)value;
++}
++
++template <bool Enabled>
++struct MaybeConst {
++  if constexpr (Enabled) { const int value = 0; } // expected-note {{copy assignment operator of 'MaybeConst<true>' is implicitly deleted because field 'value' is of const-qualified type 'const int'}}
++};
++
++void assign_false(MaybeConst<false> a, MaybeConst<false> b) {
++  a = b;
++}
++
++void assign_true(MaybeConst<true> a, MaybeConst<true> b) {
++  a = b; // expected-error {{object of type 'MaybeConst<true>' cannot be assigned}}
++}
+diff --git a/clang/test/CXXMG/urlinclude/Inputs/urlinclude_fail.py b/clang/test/CXXMG/urlinclude/Inputs/urlinclude_fail.py
+new file mode 100644
+index 000000000000..d3c37eed08fb
+--- /dev/null
++++ b/clang/test/CXXMG/urlinclude/Inputs/urlinclude_fail.py
+@@ -0,0 +1,5 @@
++#!/usr/bin/env python3
++import sys
++
++sys.stderr.write("intentional urlinclude test downloader failure\n")
++sys.exit(7)
+diff --git a/clang/test/CXXMG/urlinclude/Inputs/urlinclude_fetch.py b/clang/test/CXXMG/urlinclude/Inputs/urlinclude_fetch.py
+new file mode 100644
+index 000000000000..7fa437e06253
+--- /dev/null
++++ b/clang/test/CXXMG/urlinclude/Inputs/urlinclude_fetch.py
+@@ -0,0 +1,31 @@
++#!/usr/bin/env python3
++import argparse
++import pathlib
++import sys
++
++parser = argparse.ArgumentParser()
++parser.add_argument("--variant", default="default")
++parser.add_argument("-o", dest="output", required=True)
++parser.add_argument("url")
++args = parser.parse_args()
++
++headers = {
++    ("default", "https://cxxmg.test/basic.hpp"): "#pragma once\nstruct UrlBasic { int value; };\n",
++    ("default", "https://cxxmg.test/quote.hpp"): "#pragma once\nstruct UrlQuote { int value; };\n",
++    ("default", "https://cxxmg.test/angle.hpp"): "#pragma once\nstruct UrlAngle { int value; };\n",
++    ("default", "https://cxxmg.test/pch.hpp"): "#pragma once\nstruct UrlPch { int value; };\n",
++    ("default", "https://cxxmg.test/preprocess.hpp"): "#define URLINCLUDE_PREPROCESS_VALUE 123\n",
++    ("default", "https://cxxmg.test/same-name.hpp?one"): "#pragma once\nstruct UrlSameNameOne { int value; };\n",
++    ("default", "https://cxxmg.test/same-name.hpp?two"): "#pragma once\nstruct UrlSameNameTwo { int value; };\n",
++    ("default", "https://cxxmg.test/with-query.hpp?x=1#frag"): "#pragma once\nstruct UrlQueryFragment { int value; };\n",
++    ("v1", "https://cxxmg.test/refresh.hpp"): "#pragma once\ninline constexpr int urlinclude_refresh_value = 1;\n",
++    ("v2", "https://cxxmg.test/refresh.hpp"): "#pragma once\ninline constexpr int urlinclude_refresh_value = 2;\n",
++    ("default", "http://cxxmg.test/http.hpp"): "#pragma once\nstruct UrlHttp { int value; };\n",
++}
++
++key = (args.variant, args.url)
++if key not in headers:
++    sys.stderr.write(f"unknown test url: {args.url}\n")
++    sys.exit(9)
++
++pathlib.Path(args.output).write_text(headers[key], encoding="utf-8")
+diff --git a/clang/test/CXXMG/urlinclude/urlinclude-angle-and-quote.cpp b/clang/test/CXXMG/urlinclude/urlinclude-angle-and-quote.cpp
+new file mode 100644
+index 000000000000..36b62173b7a3
+--- /dev/null
++++ b/clang/test/CXXMG/urlinclude/urlinclude-angle-and-quote.cpp
+@@ -0,0 +1,13 @@
++// RUN: %clang_cc1 -std=c++20 -fcxxmg -fsyntax-only -verify %s \
++// RUN:   -furlinclude-cache-dir=%t.cache \
++// RUN:   -furlinclude-tool=%python \
++// RUN:   -furlinclude-tool-arg=%S/Inputs/urlinclude_fetch.py
++// expected-no-diagnostics
++
++#urlinclude "https://cxxmg.test/quote.hpp"
++#urlinclude <https://cxxmg.test/angle.hpp>
++#urlinclude "https://cxxmg.test/with-query.hpp?x=1#frag"
++
++UrlQuote q;
++UrlAngle a;
++UrlQueryFragment f;
+diff --git a/clang/test/CXXMG/urlinclude/urlinclude-basic.cpp b/clang/test/CXXMG/urlinclude/urlinclude-basic.cpp
+new file mode 100644
+index 000000000000..18c3abf4c496
+--- /dev/null
++++ b/clang/test/CXXMG/urlinclude/urlinclude-basic.cpp
+@@ -0,0 +1,10 @@
++// RUN: %clang_cc1 -std=c++20 -fcxxmg -fsyntax-only -verify %s \
++// RUN:   -furlinclude-cache-dir=%t.cache \
++// RUN:   -furlinclude-tool=%python \
++// RUN:   -furlinclude-tool-arg=%S/Inputs/urlinclude_fetch.py
++// expected-no-diagnostics
++
++#urlinclude "https://cxxmg.test/basic.hpp"
++#urlinclude "https://cxxmg.test/basic.hpp"
++
++UrlBasic make_basic() { return UrlBasic{1}; }
+diff --git a/clang/test/CXXMG/urlinclude/urlinclude-cache-collision.cpp b/clang/test/CXXMG/urlinclude/urlinclude-cache-collision.cpp
+new file mode 100644
+index 000000000000..49cb55ac8050
+--- /dev/null
++++ b/clang/test/CXXMG/urlinclude/urlinclude-cache-collision.cpp
+@@ -0,0 +1,11 @@
++// RUN: %clang_cc1 -std=c++20 -fcxxmg -fsyntax-only -verify %s \
++// RUN:   -furlinclude-cache-dir=%t.cache \
++// RUN:   -furlinclude-tool=%python \
++// RUN:   -furlinclude-tool-arg=%S/Inputs/urlinclude_fetch.py
++// expected-no-diagnostics
++
++#urlinclude "https://cxxmg.test/same-name.hpp?one"
++#urlinclude "https://cxxmg.test/same-name.hpp?two"
++
++UrlSameNameOne one;
++UrlSameNameTwo two;
+diff --git a/clang/test/CXXMG/urlinclude/urlinclude-cache-offline.cpp b/clang/test/CXXMG/urlinclude/urlinclude-cache-offline.cpp
+new file mode 100644
+index 000000000000..4dc9161da038
+--- /dev/null
++++ b/clang/test/CXXMG/urlinclude/urlinclude-cache-offline.cpp
+@@ -0,0 +1,19 @@
++// RUN: rm -rf %t.cache %t.empty
++// RUN: %clang_cc1 -std=c++20 -fcxxmg -fsyntax-only -verify %s \
++// RUN:   -furlinclude-cache-dir=%t.cache \
++// RUN:   -furlinclude-tool=%python \
++// RUN:   -furlinclude-tool-arg=%S/Inputs/urlinclude_fetch.py
++// RUN: %clang_cc1 -std=c++20 -fcxxmg -fsyntax-only -verify %s \
++// RUN:   -furlinclude-cache-dir=%t.cache \
++// RUN:   -furlinclude-offline \
++// RUN:   -furlinclude-tool=%python \
++// RUN:   -furlinclude-tool-arg=%S/Inputs/urlinclude_fail.py
++// RUN: not %clang_cc1 -std=c++20 -fcxxmg -fsyntax-only %s \
++// RUN:   -furlinclude-cache-dir=%t.empty \
++// RUN:   -furlinclude-offline 2>&1 | FileCheck %s --check-prefix=MISS
++// expected-no-diagnostics
++
++#urlinclude "https://cxxmg.test/basic.hpp"
++UrlBasic value;
++
++// MISS: #urlinclude cache miss for https://cxxmg.test/basic.hpp in offline mode
+diff --git a/clang/test/CXXMG/urlinclude/urlinclude-diagnostics.cpp b/clang/test/CXXMG/urlinclude/urlinclude-diagnostics.cpp
+new file mode 100644
+index 000000000000..5ef447b75ebc
+--- /dev/null
++++ b/clang/test/CXXMG/urlinclude/urlinclude-diagnostics.cpp
+@@ -0,0 +1,34 @@
++// RUN: not %clang_cc1 -std=c++20 -fcxxmg -fsyntax-only %s -DCASE_NO_SCHEME 2>&1 | FileCheck %s --check-prefix=NO-SCHEME
++// RUN: not %clang_cc1 -std=c++20 -fcxxmg -fsyntax-only %s -DCASE_UNSUPPORTED 2>&1 | FileCheck %s --check-prefix=BAD-SCHEME
++// RUN: not %clang_cc1 -std=c++20 -fcxxmg -fsyntax-only %s -DCASE_EMPTY_HOST 2>&1 | FileCheck %s --check-prefix=EMPTY-HOST
++// RUN: not %clang_cc1 -std=c++20 -fcxxmg -fsyntax-only %s -DCASE_WHITESPACE 2>&1 | FileCheck %s --check-prefix=WHITESPACE
++// RUN: not %clang_cc1 -std=c++20 -fcxxmg -fsyntax-only %s -DCASE_FAIL \
++// RUN:   -furlinclude-cache-dir=%t.fail \
++// RUN:   -furlinclude-tool=%python \
++// RUN:   -furlinclude-tool-arg=%S/Inputs/urlinclude_fail.py 2>&1 | FileCheck %s --check-prefix=FAIL
++
++#ifdef CASE_NO_SCHEME
++#urlinclude "cxxmg.test/basic.hpp"
++#endif
++
++#ifdef CASE_UNSUPPORTED
++#urlinclude "ftp://cxxmg.test/basic.hpp"
++#endif
++
++#ifdef CASE_EMPTY_HOST
++#urlinclude "https:///basic.hpp"
++#endif
++
++#ifdef CASE_WHITESPACE
++#urlinclude "https://cxxmg.test/bad header.hpp"
++#endif
++
++#ifdef CASE_FAIL
++#urlinclude "https://cxxmg.test/basic.hpp"
++#endif
++
++// NO-SCHEME: #urlinclude requires an http(s) URL
++// BAD-SCHEME: unsupported {{.*}} scheme in #urlinclude
++// EMPTY-HOST: invalid URL in #urlinclude: empty host
++// WHITESPACE: invalid URL in #urlinclude: raw whitespace or control character
++// FAIL: #urlinclude download failed for https://cxxmg.test/basic.hpp
+diff --git a/clang/test/CXXMG/urlinclude/urlinclude-disabled.cpp b/clang/test/CXXMG/urlinclude/urlinclude-disabled.cpp
+new file mode 100644
+index 000000000000..d8a9b4549b1e
+--- /dev/null
++++ b/clang/test/CXXMG/urlinclude/urlinclude-disabled.cpp
+@@ -0,0 +1,12 @@
++// RUN: not %clang_cc1 -std=c++20 -fcxxmg -fsyntax-only %s -fno-urlinclude 2>&1 | FileCheck %s --check-prefix=DISABLED
++// RUN: %clang_cc1 -std=c++20 -fcxxmg -fsyntax-only %s -DONLY_MACRO_CHECK -fno-urlinclude
++
++#ifdef ONLY_MACRO_CHECK
++#ifdef __cxxmg_urlinclude
++#error "__cxxmg_urlinclude should not be defined when -fno-urlinclude is used"
++#endif
++#else
++#urlinclude "https://cxxmg.test/basic.hpp"
++#endif
++
++// DISABLED: #urlinclude is disabled; enable it with -furlinclude
+diff --git a/clang/test/CXXMG/urlinclude/urlinclude-driver.cpp b/clang/test/CXXMG/urlinclude/urlinclude-driver.cpp
+new file mode 100644
+index 000000000000..bf4ccd8e7c88
+--- /dev/null
++++ b/clang/test/CXXMG/urlinclude/urlinclude-driver.cpp
+@@ -0,0 +1,7 @@
++// RUN: clang-mg++ -std=c++20 -fsyntax-only %s \
++// RUN:   -furlinclude-cache-dir=%t.cache \
++// RUN:   -furlinclude-tool=%python \
++// RUN:   -furlinclude-tool-arg=%S/Inputs/urlinclude_fetch.py
++
++#urlinclude "https://cxxmg.test/basic.hpp"
++UrlBasic value;
+diff --git a/clang/test/CXXMG/urlinclude/urlinclude-feature-test.cpp b/clang/test/CXXMG/urlinclude/urlinclude-feature-test.cpp
+new file mode 100644
+index 000000000000..3970dd183ec5
+--- /dev/null
++++ b/clang/test/CXXMG/urlinclude/urlinclude-feature-test.cpp
+@@ -0,0 +1,19 @@
++// RUN: %clang_cc1 -x c++ -std=c++20 -fcxxmg -fsyntax-only -DEXPECT_URLINCLUDE=1 %s
++// RUN: %clang_cc1 -x c++ -std=c++20 -fsyntax-only -DEXPECT_URLINCLUDE=1 %s
++// RUN: %clang_cc1 -x c -std=c23 -fsyntax-only -DEXPECT_URLINCLUDE=1 %s
++// RUN: %clang_cc1 -x c++ -std=c++20 -fcxxmg -fsyntax-only -DEXPECT_NO_URLINCLUDE=1 -fno-urlinclude %s
++
++#ifdef EXPECT_URLINCLUDE
++#ifndef __cxxmg_urlinclude
++#error "expected __cxxmg_urlinclude"
++#endif
++#if __cxxmg_urlinclude != 1
++#error "wrong __cxxmg_urlinclude value"
++#endif
++#endif
++
++#ifdef EXPECT_NO_URLINCLUDE
++#ifdef __cxxmg_urlinclude
++#error "did not expect __cxxmg_urlinclude"
++#endif
++#endif
+diff --git a/clang/test/CXXMG/urlinclude/urlinclude-http.cpp b/clang/test/CXXMG/urlinclude/urlinclude-http.cpp
+new file mode 100644
+index 000000000000..210815542264
+--- /dev/null
++++ b/clang/test/CXXMG/urlinclude/urlinclude-http.cpp
+@@ -0,0 +1,16 @@
++// RUN: not %clang_cc1 -std=c++20 -fcxxmg -fsyntax-only %s 2>&1 | FileCheck %s --check-prefix=NOHTTP
++// RUN: %clang_cc1 -std=c++20 -fcxxmg -fsyntax-only -verify %s -DALLOW_HTTP \
++// RUN:   -furlinclude-allow-http \
++// RUN:   -furlinclude-cache-dir=%t.cache \
++// RUN:   -furlinclude-tool=%python \
++// RUN:   -furlinclude-tool-arg=%S/Inputs/urlinclude_fetch.py
++
++#ifdef ALLOW_HTTP
++// expected-no-diagnostics
++#urlinclude "http://cxxmg.test/http.hpp"
++UrlHttp value;
++#else
++#urlinclude "http://cxxmg.test/http.hpp"
++#endif
++
++// NOHTTP: insecure http:// URL in #urlinclude requires -furlinclude-allow-http
+diff --git a/clang/test/CXXMG/urlinclude/urlinclude-include-semantics.cpp b/clang/test/CXXMG/urlinclude/urlinclude-include-semantics.cpp
+new file mode 100644
+index 000000000000..cd406dc05b35
+--- /dev/null
++++ b/clang/test/CXXMG/urlinclude/urlinclude-include-semantics.cpp
+@@ -0,0 +1,9 @@
++// RUN: %clang_cc1 -std=c++20 -fcxxmg -fsyntax-only -verify %s \
++// RUN:   -furlinclude-cache-dir=%t.cache \
++// RUN:   -furlinclude-tool=%python \
++// RUN:   -furlinclude-tool-arg=%S/Inputs/urlinclude_fetch.py
++
++#urlinclude "https://cxxmg.test/basic.hpp"
++#include "basic.hpp" // expected-error {{'basic.hpp' file not found}}
++
++UrlBasic value;
+diff --git a/clang/test/CXXMG/urlinclude/urlinclude-options.cpp b/clang/test/CXXMG/urlinclude/urlinclude-options.cpp
+new file mode 100644
+index 000000000000..ff02412c5724
+--- /dev/null
++++ b/clang/test/CXXMG/urlinclude/urlinclude-options.cpp
+@@ -0,0 +1,10 @@
++// RUN: %clang_cc1 -std=c++20 -fcxxmg -fsyntax-only -verify %s \
++// RUN:   -furlinclude-timeout=1 \
++// RUN:   -furlinclude-progress=never \
++// RUN:   -furlinclude-cache-dir=%t.cache \
++// RUN:   -furlinclude-tool=%python \
++// RUN:   -furlinclude-tool-arg=%S/Inputs/urlinclude_fetch.py
++// expected-no-diagnostics
++
++#urlinclude "https://cxxmg.test/basic.hpp"
++UrlBasic value;
+diff --git a/clang/test/CXXMG/urlinclude/urlinclude-pch.cpp b/clang/test/CXXMG/urlinclude/urlinclude-pch.cpp
+new file mode 100644
+index 000000000000..0b2eb16f58f6
+--- /dev/null
++++ b/clang/test/CXXMG/urlinclude/urlinclude-pch.cpp
+@@ -0,0 +1,14 @@
++// RUN: %clang_cc1 -std=c++20 -fcxxmg -emit-pch -o %t.pch %s \
++// RUN:   -furlinclude-cache-dir=%t.cache \
++// RUN:   -furlinclude-tool=%python \
++// RUN:   -furlinclude-tool-arg=%S/Inputs/urlinclude_fetch.py
++// RUN: %clang_cc1 -std=c++20 -fcxxmg -include-pch %t.pch -DUSING_PCH -fsyntax-only -verify %s \
++// RUN:   -furlinclude-cache-dir=%t.cache \
++// RUN:   -furlinclude-offline
++
++#ifndef USING_PCH
++#urlinclude "https://cxxmg.test/pch.hpp"
++#else
++// expected-no-diagnostics
++UrlPch value;
++#endif
+diff --git a/clang/test/CXXMG/urlinclude/urlinclude-preprocess.cpp b/clang/test/CXXMG/urlinclude/urlinclude-preprocess.cpp
+new file mode 100644
+index 000000000000..05d1dc086b97
+--- /dev/null
++++ b/clang/test/CXXMG/urlinclude/urlinclude-preprocess.cpp
+@@ -0,0 +1,9 @@
++// RUN: %clang_cc1 -std=c++20 -fcxxmg -E %s \
++// RUN:   -furlinclude-cache-dir=%t.cache \
++// RUN:   -furlinclude-tool=%python \
++// RUN:   -furlinclude-tool-arg=%S/Inputs/urlinclude_fetch.py | FileCheck %s
++
++#urlinclude "https://cxxmg.test/preprocess.hpp"
++int value = URLINCLUDE_PREPROCESS_VALUE;
++
++// CHECK: int value = 123;
+diff --git a/clang/test/CXXMG/urlinclude/urlinclude-redaction.cpp b/clang/test/CXXMG/urlinclude/urlinclude-redaction.cpp
+new file mode 100644
+index 000000000000..63cc343cf08b
+--- /dev/null
++++ b/clang/test/CXXMG/urlinclude/urlinclude-redaction.cpp
+@@ -0,0 +1,7 @@
++// RUN: not %clang_cc1 -std=c++20 -fcxxmg -fsyntax-only %s \
++// RUN:   -furlinclude-cache-dir=%t.empty \
++// RUN:   -furlinclude-offline 2>&1 | FileCheck %s
++
++#urlinclude "https://user:secret@cxxmg.test/basic.hpp"
++
++// CHECK: #urlinclude cache miss for https://<redacted>@cxxmg.test/basic.hpp in offline mode
+diff --git a/clang/test/CXXMG/urlinclude/urlinclude-refresh.cpp b/clang/test/CXXMG/urlinclude/urlinclude-refresh.cpp
+new file mode 100644
+index 000000000000..3ad0c9a66462
+--- /dev/null
++++ b/clang/test/CXXMG/urlinclude/urlinclude-refresh.cpp
+@@ -0,0 +1,20 @@
++// RUN: rm -rf %t.cache
++// RUN: %clang_cc1 -std=c++20 -fcxxmg -fsyntax-only -DEXPECT=1 %s \
++// RUN:   -furlinclude-cache-dir=%t.cache \
++// RUN:   -furlinclude-tool=%python \
++// RUN:   -furlinclude-tool-arg=%S/Inputs/urlinclude_fetch.py \
++// RUN:   -furlinclude-tool-arg=--variant=v1
++// RUN: %clang_cc1 -std=c++20 -fcxxmg -fsyntax-only -DEXPECT=1 %s \
++// RUN:   -furlinclude-cache-dir=%t.cache \
++// RUN:   -furlinclude-tool=%python \
++// RUN:   -furlinclude-tool-arg=%S/Inputs/urlinclude_fetch.py \
++// RUN:   -furlinclude-tool-arg=--variant=v2
++// RUN: %clang_cc1 -std=c++20 -fcxxmg -fsyntax-only -DEXPECT=2 %s \
++// RUN:   -furlinclude-cache-dir=%t.cache \
++// RUN:   -furlinclude-refresh \
++// RUN:   -furlinclude-tool=%python \
++// RUN:   -furlinclude-tool-arg=%S/Inputs/urlinclude_fetch.py \
++// RUN:   -furlinclude-tool-arg=--variant=v2
++
++#urlinclude "https://cxxmg.test/refresh.hpp"
++static_assert(urlinclude_refresh_value == EXPECT);
+diff --git a/clang/test/Parser/cxxmg-if-constexpr-members.cpp b/clang/test/Parser/cxxmg-if-constexpr-members.cpp
+deleted file mode 100644
+index fc213b1ee0a3..000000000000
+--- a/clang/test/Parser/cxxmg-if-constexpr-members.cpp
++++ /dev/null
+@@ -1,35 +0,0 @@
+-// RUN: %clang_cc1 -std=c++mg -fsyntax-only -verify %s
+-// expected-no-diagnostics
+-
+-struct SingleArm {
+-  if constexpr (true) {
+-    int value;
+-  }
+-};
+-
+-struct WithElse {
+-  if constexpr (false) {
+-    int first;
+-  } else {
+-    int second;
+-  }
+-};
+-
+-struct ElseIfChain {
+-  if constexpr (false) {
+-    int first;
+-  } else if constexpr (true) {
+-    int second;
+-  } else {
+-    int third;
+-  }
+-};
+-
+-template <bool Enabled>
+-struct DependentCondition {
+-  if constexpr (Enabled) {
+-    int enabled;
+-  } else {
+-    int disabled;
+-  }
+-};
+-- 
+2.54.0
+
