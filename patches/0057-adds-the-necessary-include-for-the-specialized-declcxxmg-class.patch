@@ -1,0 +1,29 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Mike <michaelgorney4@gmail.com>
+Date: Thu, 11 Jun 2026 21:25:11 -0400
+Subject: [PATCH] Adds the necessary include for the specialized DeclCXXMG
+ class.
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Adds the necessary include for the specialized DeclCXXMG class.
+This ensures that DeclVisitor has access to the custom declaration structur[8D[K
+structure
+required by the clang-mg modifications.
+
+diff --git a/clang/include/clang/AST/DeclVisitor.h b/clang/include/clang/AST/DeclVisitor.h
+index 8b7c30ee4051..836b7f1dad77 100644
+--- a/clang/include/clang/AST/DeclVisitor.h
++++ b/clang/include/clang/AST/DeclVisitor.h
+@@ -16,6 +16,7 @@
+ #include "clang/AST/Decl.h"
+ #include "clang/AST/DeclBase.h"
+ #include "clang/AST/DeclCXX.h"
++#include "clang/AST/DeclCXXMG.h"
+ #include "clang/AST/DeclFriend.h"
+ #include "clang/AST/DeclObjC.h"
+ #include "clang/AST/DeclOpenACC.h"
+-- 
+2.54.0
+
