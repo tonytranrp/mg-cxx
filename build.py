@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 from __future__ import annotations
 
+import importlib.util
 import os
 import sys
 from pathlib import Path
@@ -169,22 +170,49 @@ def run_build(scripts_dir: Path, llvm_dir: Path, build_dir: Path, build_type: st
     run(args, env=env)
 
 
+def load_script_module(path: Path, module_name: str):
+    spec = importlib.util.spec_from_file_location(module_name, path)
+    if spec is None or spec.loader is None:
+        raise SystemExit(f"ERROR: Could not load script module: {path}")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
 def run_tests(scripts_dir: Path, llvm_dir: Path, build_dir: Path, build_type: str,
-              jobs: str, test_args: list[str], work_dir: Path, target_triple: str) -> None:
+              jobs: str, test_args: list[str], work_dir: Path, target_triple: str) -> int | None:
     require_llvm_repo(llvm_dir)
     args = [
-        sys.executable,
-        str(scripts_dir / "test-llvm.py"),
         str(llvm_dir),
         str(build_dir),
         build_type,
         jobs,
         *test_args,
     ]
-    env = os.environ.copy()
-    env["WORK_DIR"] = str(work_dir)
-    env["BUILD_TARGET_TRIPLE"] = target_triple
-    run(args, env=env)
+    old_work_dir = os.environ.get("WORK_DIR")
+    old_target_triple = os.environ.get("BUILD_TARGET_TRIPLE")
+    os.environ["WORK_DIR"] = str(work_dir)
+    os.environ["BUILD_TARGET_TRIPLE"] = target_triple
+    try:
+        test_llvm = load_script_module(scripts_dir / "test-llvm.py", "clang_mg_test_llvm")
+        return test_llvm.run_test_llvm(args)
+    finally:
+        if old_work_dir is None:
+            os.environ.pop("WORK_DIR", None)
+        else:
+            os.environ["WORK_DIR"] = old_work_dir
+        if old_target_triple is None:
+            os.environ.pop("BUILD_TARGET_TRIPLE", None)
+        else:
+            os.environ["BUILD_TARGET_TRIPLE"] = old_target_triple
+
+
+def final_message_for_passed_tests(passed_tests: int | None) -> str:
+    if passed_tests == 69:
+        return "Nice."
+    if passed_tests == 420:
+        return "Blaze It!"
+    return "Done."
 
 
 def run_install_path(scripts_dir: Path, llvm_dir: Path, build_dir: Path) -> None:
@@ -215,6 +243,7 @@ def main(argv: list[str]) -> int:
     rest = filtered[1:]
 
     print_header(command, llvm_ref, llvm_dir, build_target_triple, build_dir, build_type, jobs)
+    final_message = "Done."
 
     if command in {"help", "-h", "--help"}:
         usage(root_dir)
@@ -258,7 +287,8 @@ def main(argv: list[str]) -> int:
     elif command == "build":
         run_build(scripts_dir, llvm_dir, build_dir, build_type, jobs, build_target_triple, interactive)
     elif command == "test":
-        run_tests(scripts_dir, llvm_dir, build_dir, build_type, jobs, rest, work_dir, build_target_triple)
+        passed_tests = run_tests(scripts_dir, llvm_dir, build_dir, build_type, jobs, rest, work_dir, build_target_triple)
+        final_message = final_message_for_passed_tests(passed_tests)
     elif command == "bootstrap":
         run_update(scripts_dir, llvm_url, llvm_ref, work_dir, llvm_dir)
         run_apply_patches(root_dir, scripts_dir, llvm_dir)
@@ -287,7 +317,7 @@ def main(argv: list[str]) -> int:
         return 1
 
     print()
-    print("Done.")
+    print(final_message)
     return 0
 
 

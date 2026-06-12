@@ -5,6 +5,7 @@ import os
 import re
 import shlex
 import shutil
+import subprocess
 import sys
 import textwrap
 from pathlib import Path
@@ -549,7 +550,36 @@ def map_to_minimal_clang_mg_suite(project_test_dir: Path, suite_dir: Path, test_
     return mapped
 
 
-def run_minimal_clang_mg_lit(build_dir: Path, jobs: str, project_test_dir: Path, test_paths: list[Path]) -> None:
+def parse_lit_passed_count(line: str) -> int | None:
+    match = re.match(r"^\s*Passed:\s+(\d+)(?:\s|\(|$)", line)
+    return int(match.group(1)) if match else None
+
+
+def run_lit_command(args: list[str], env: dict[str, str]) -> int | None:
+    sys.stdout.flush()
+    sys.stderr.flush()
+    passed_tests: int | None = None
+    with subprocess.Popen(
+        [str(arg) for arg in args],
+        env=env,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        text=True,
+        bufsize=1,
+    ) as process:
+        assert process.stdout is not None
+        for line in process.stdout:
+            print(line, end="")
+            parsed = parse_lit_passed_count(line)
+            if parsed is not None:
+                passed_tests = parsed
+        return_code = process.wait()
+    if return_code != 0:
+        raise SystemExit(f"{' '.join(args)} failed with exit code {return_code}")
+    return passed_tests
+
+
+def run_minimal_clang_mg_lit(build_dir: Path, jobs: str, project_test_dir: Path, test_paths: list[Path]) -> int | None:
     lit_cmd = find_llvm_lit_command(build_dir)
     suite_dir = create_minimal_clang_mg_lit_suite(build_dir, project_test_dir / "CXXMG")
     mapped_tests = map_to_minimal_clang_mg_suite(project_test_dir, suite_dir, test_paths)
@@ -562,9 +592,10 @@ def run_minimal_clang_mg_lit(build_dir: Path, jobs: str, project_test_dir: Path,
     if env.get("CLANG"):
         print(f"  CLANG={env['CLANG']}")
     print("  " + " ".join(args))
-    run(args, env=env)
+    return run_lit_command(args, env)
 
-def run_lit(build_dir: Path, jobs: str, test_paths: list[Path]) -> None:
+
+def run_lit(build_dir: Path, jobs: str, test_paths: list[Path]) -> int | None:
     lit_cmd = find_llvm_lit_command(build_dir)
     extra_args = shlex.split(os.environ.get("CLANG_MG_LIT_OPTS", ""))
     args = [*lit_cmd, "-j", str(jobs), *extra_args, *[str(path) for path in test_paths]]
@@ -574,18 +605,18 @@ def run_lit(build_dir: Path, jobs: str, test_paths: list[Path]) -> None:
     if env.get("CLANG"):
         print(f"  CLANG={env['CLANG']}")
     print("  " + " ".join(args))
-    run(args, env=env)
+    return run_lit_command(args, env)
 
 
-def main(argv: list[str]) -> int:
+def run_test_llvm(argv: list[str]) -> int | None:
     if any(arg in {"-h", "--help"} for arg in argv):
         show_usage(str(Path(__file__)))
-        return 0
+        return None
     if len(argv) < 4:
         print("ERROR: Missing required arguments.")
         print()
         show_usage(str(Path(__file__)))
-        return 1
+        raise SystemExit(1)
 
     llvm_dir = Path(argv[0]).resolve()
     build_dir = Path(argv[1]).resolve()
@@ -641,7 +672,7 @@ def main(argv: list[str]) -> int:
 
     if not requested_tests:
         run_full_project_tests(build_dir, build_type, jobs, project)
-        return 0
+        return None
 
     resolved_tests = [resolve_case_insensitive_path(project_test_dir, test) for test in requested_tests]
     print("Resolved tests:")
@@ -651,10 +682,13 @@ def main(argv: list[str]) -> int:
     if should_use_minimal_clang_mg_lit(project, project_test_dir, resolved_tests):
         print("Lit config:    minimal CXXMG config (skips upstream clang-repl probes)")
         build_minimal_clang_mg_test_targets(build_dir, build_type, jobs)
-        run_minimal_clang_mg_lit(build_dir, jobs, project_test_dir, resolved_tests)
-    else:
-        build_required_subset_targets(build_dir, build_type, jobs, project)
-        run_lit(build_dir, jobs, resolved_tests)
+        return run_minimal_clang_mg_lit(build_dir, jobs, project_test_dir, resolved_tests)
+    build_required_subset_targets(build_dir, build_type, jobs, project)
+    return run_lit(build_dir, jobs, resolved_tests)
+
+
+def main(argv: list[str]) -> int:
+    run_test_llvm(argv)
     return 0
 
 
